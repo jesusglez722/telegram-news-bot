@@ -32,18 +32,15 @@ jobs:
 
       - name: Guardar estado
         run: |
-          git config --global user.name "bot"
-          git config --global user.email "bot@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Asegurar repo limpio (clave!)
-          git reset --hard
-          
-          # Traer cambios remotos
-          git pull --rebase
-          
-          # Añadir archivos generados por el bot
+          # 1. Añadimos los cambios que hizo el script
           git add *.txt || true
+          
+          # 2. Hacemos commit si hay cambios
           git commit -m "update last tweets" || true
           
-          # Subir cambios
+          # 3. Traemos cambios remotos y subimos
+          git pull --rebase origin main
           git push
