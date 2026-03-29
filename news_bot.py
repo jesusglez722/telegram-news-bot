@@ -2,7 +2,7 @@ import feedparser
 import requests
 import os
 
-BOT_TOKEN = os.getenv("8740680617:AAFAv84FjYF1sk52PZ3Gf4kezHsVKW0CqBo")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 ACCOUNTS = {
     "ReutersBiz": "-1003749568108",
