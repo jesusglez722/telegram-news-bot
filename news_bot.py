@@ -2,9 +2,8 @@ import feedparser
 import requests
 import os
 
-BOT_TOKEN = "8740680617:AAFAv84FjYF1sk52PZ3Gf4kezHsVKW0CqBo"
+BOT_TOKEN = os.getenv("8740680617:AAFAv84FjYF1sk52PZ3Gf4kezHsVKW0CqBo")
 
-# CONFIGURACIÓN DE CUENTAS Y CANALES
 ACCOUNTS = {
     "ReutersBiz": "-1003749568108",
     "ReuterChina": "-1003724765047",
@@ -31,7 +30,6 @@ def send_telegram(chat_id, msg):
     requests.post(url, data={"chat_id": chat_id, "text": msg})
 
 for account, chat_id in ACCOUNTS.items():
-    print("Checking", account)
     feed_url = f"https://nitter.net/{account}/rss"
     feed = feedparser.parse(feed_url)
 
