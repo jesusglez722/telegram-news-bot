@@ -34,6 +34,13 @@ jobs:
         run: |
           git config --global user.name "bot"
           git config --global user.email "bot@github.com"
+          
+          # Traer cambios remotos antes de subir
+          git pull --rebase
+          
+          # Guardar archivos de estado
           git add *.txt || true
           git commit -m "update last tweets" || true
+          
+          # Subir cambios
           git push
