@@ -15,15 +15,19 @@ ACCOUNTS = {
 }
 
 # ─────────────────────────────
-# LIMPIAR TEXTO Y EXTRAER LINK DEL ARTÍCULO
+# LIMPIAR TEXTO DEL TWEET Y QUITAR LINKS FEOS
 # ─────────────────────────────
 
-def limpiar_tweet_y_link(texto):
-    links = re.findall(r'https?://\S+', texto)
-    articulo = links[0] if links else ""
+def limpiar_texto(texto):
     texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
-    return texto_limpio, articulo
+    return texto_limpio
 
+# Convertir enlace de Nitter → FXTwitter (para preview con imagen)
+def convertir_a_fxtwitter(link):
+    return link.replace("nitter.net", "fxtwitter.com")
+
+# ─────────────────────────────
+# GUARDAR ESTADO (NO DUPLICAR POSTS)
 # ─────────────────────────────
 
 def get_last_link(account):
@@ -51,15 +55,6 @@ def send_telegram(chat_id, msg):
         "disable_web_page_preview": False
     })
 
-def send_photo(chat_id, caption, image_url):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "photo": image_url,
-        "caption": caption,
-        "parse_mode": "HTML"
-    })
-
 # Emojis por medio
 EMOJIS = {
     "ReutersBiz": "🟡",
@@ -70,6 +65,8 @@ EMOJIS = {
     "TheEconomist": "🔴"
 }
 
+# ─────────────────────────────
+# MAIN LOOP
 # ─────────────────────────────
 
 for account, chat_id in ACCOUNTS.items():
@@ -88,7 +85,8 @@ for account, chat_id in ACCOUNTS.items():
         new_posts.reverse()
 
         for post in new_posts:
-            texto, articulo = limpiar_tweet_y_link(post.title)
+            texto = limpiar_texto(post.title)
+            tweet_fx = convertir_a_fxtwitter(post.link)
             emoji = EMOJIS.get(account, "📰")
 
             mensaje = f"""
@@ -96,20 +94,9 @@ for account, chat_id in ACCOUNTS.items():
 
 {texto}
 
-<a href="{articulo}">🔗 Leer artículo</a>
+<a href="{tweet_fx}">🔗 Ver tweet</a>
 """
 
-            # 🔥 NUEVO: enviar imagen si existe
-            imagen = None
-            if hasattr(post, "media_content"):
-                try:
-                    imagen = post.media_content[0]["url"]
-                except:
-                    imagen = None
-
-            if imagen:
-                send_photo(chat_id, mensaje, imagen)
-            else:
-                send_telegram(chat_id, mensaje)
+            send_telegram(chat_id, mensaje)
 
         save_last_link(account, new_posts[-1].link)
