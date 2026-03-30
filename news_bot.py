@@ -38,14 +38,21 @@ FEEDS = {
     }
 }
 
+MAX_HISTORY = 300
+MAX_POSTS_PER_RUN = 5
+
+# ─────────────────────────────
+# LIMPIEZA TEXTO / URL
 # ─────────────────────────────
 
 def limpiar_html(texto):
     limpio = re.sub("<.*?>", "", texto)
     return limpio.strip()
 
+def limpiar_url_google(link):
+    return link.split("?")[0]
+
 def obtener_imagen(entry):
-    # Distintos formatos RSS usan campos distintos
     if "media_content" in entry:
         return entry.media_content[0]["url"]
     if "links" in entry:
@@ -55,16 +62,24 @@ def obtener_imagen(entry):
     return None
 
 # ─────────────────────────────
+# SISTEMA NUEVO ANTI DUPLICADOS
+# ─────────────────────────────
 
-def get_last_link(source):
-    file = f"last_{source}.txt"
+def load_sent_links(source):
+    file = f"sent_{source}.txt"
     if not os.path.exists(file):
-        return ""
-    return open(file).read().strip()
+        return set()
+    with open(file, "r", encoding="utf-8") as f:
+        return set(line.strip() for line in f.readlines())
 
-def save_last_link(source, link):
-    open(f"last_{source}.txt", "w").write(link)
+def save_sent_links(source, links_set):
+    file = f"sent_{source}.txt"
+    links = list(links_set)[-MAX_HISTORY:]
+    with open(file, "w", encoding="utf-8") as f:
+        f.write("\n".join(links))
 
+# ─────────────────────────────
+# TELEGRAM
 # ─────────────────────────────
 
 def send_photo(chat_id, caption, photo):
@@ -90,26 +105,34 @@ def send_message(chat_id, text):
     )
 
 # ─────────────────────────────
+# MAIN LOOP
+# ─────────────────────────────
 
 for source, data in FEEDS.items():
+    print(f"Checking {source}...")
     feed = feedparser.parse(data["url"])
-    last_link = get_last_link(source)
-    new_posts = []
+    sent_links = load_sent_links(source)
+
+    nuevos = []
 
     for entry in feed.entries:
-        if entry.link == last_link:
-            break
-        new_posts.append(entry)
+        link = limpiar_url_google(entry.link)
 
-    if new_posts:
-        new_posts.reverse()
+        if link in sent_links:
+            continue
 
-        for post in new_posts:
-            titulo = limpiar_html(post.title)
-            link = post.link
-            imagen = obtener_imagen(post)
+        nuevos.append(entry)
+        sent_links.add(link)
 
-            caption = f"""
+    # evita avalanchas
+    nuevos = nuevos[:MAX_POSTS_PER_RUN]
+
+    for post in reversed(nuevos):
+        titulo = limpiar_html(post.title)
+        link = limpiar_url_google(post.link)
+        imagen = obtener_imagen(post)
+
+        caption = f"""
 <b>{data['emoji']} {source.upper()}</b>
 
 {titulo}
@@ -117,9 +140,9 @@ for source, data in FEEDS.items():
 <a href="{link}">📰 Leer noticia</a>
 """
 
-            if imagen:
-                send_photo(data["chat"], caption, imagen)
-            else:
-                send_message(data["chat"], caption)
+        if imagen:
+            send_photo(data["chat"], caption, imagen)
+        else:
+            send_message(data["chat"], caption)
 
-        save_last_link(source, new_posts[-1].link)
+    save_sent_links(source, sent_links)
