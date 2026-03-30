@@ -52,7 +52,26 @@ def limpiar_html(texto):
 def limpiar_url_google(link):
     return link.split("?")[0]
 
-def obtener_imagen(entry):
+# ─────────────────────────────
+# EXTRAER URL REAL GOOGLE NEWS
+# ─────────────────────────────
+
+def extraer_url_real_google(entry):
+    if "news.google.com" not in entry.link:
+        return entry.link
+    
+    if "summary" in entry:
+        match = re.search(r'href="(https?://[^"]+)"', entry.summary)
+        if match:
+            return match.group(1)
+    
+    return entry.link
+
+# ─────────────────────────────
+# IMÁGENES
+# ─────────────────────────────
+
+def obtener_imagen_feed(entry):
     if "media_content" in entry:
         return entry.media_content[0]["url"]
     if "links" in entry:
@@ -61,8 +80,22 @@ def obtener_imagen(entry):
                 return l.href
     return None
 
+def obtener_imagen_web(url):
+    try:
+        html = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0"
+        }).text
+
+        match = re.search(r'property="og:image"\s*content="([^"]+)"', html)
+        if match:
+            return match.group(1)
+    except:
+        pass
+
+    return None
+
 # ─────────────────────────────
-# SISTEMA NUEVO ANTI DUPLICADOS
+# HISTORIAL ANTI DUPLICADOS
 # ─────────────────────────────
 
 def load_sent_links(source):
@@ -116,21 +149,25 @@ for source, data in FEEDS.items():
     nuevos = []
 
     for entry in feed.entries:
-        link = limpiar_url_google(entry.link)
+        link = extraer_url_real_google(entry)
+        link = limpiar_url_google(link)
 
         if link in sent_links:
             continue
 
+        entry.real_link = link
         nuevos.append(entry)
         sent_links.add(link)
 
-    # evita avalanchas
     nuevos = nuevos[:MAX_POSTS_PER_RUN]
 
     for post in reversed(nuevos):
         titulo = limpiar_html(post.title)
-        link = limpiar_url_google(post.link)
-        imagen = obtener_imagen(post)
+        link = post.real_link
+
+        imagen = obtener_imagen_feed(post)
+        if not imagen:
+            imagen = obtener_imagen_web(link)
 
         caption = f"""
 <b>{data['emoji']} {source.upper()}</b>
