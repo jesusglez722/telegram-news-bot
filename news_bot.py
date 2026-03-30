@@ -15,19 +15,27 @@ ACCOUNTS = {
 }
 
 # ─────────────────────────────
-# LIMPIAR TEXTO DEL TWEET Y QUITAR LINKS FEOS
-# ─────────────────────────────
 
-def limpiar_texto(texto):
+def limpiar_texto_y_link(texto):
+    links = re.findall(r'https?://\S+', texto)
+    articulo = links[0] if links else ""
     texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
-    return texto_limpio
+    return texto_limpio, articulo
 
-# Convertir enlace de Nitter → FXTwitter (para preview con imagen)
-def convertir_a_fxtwitter(link):
-    return link.replace("nitter.net", "fxtwitter.com")
+def get_tweet_id(link):
+    return link.split("/")[-1]
 
-# ─────────────────────────────
-# GUARDAR ESTADO (NO DUPLICAR POSTS)
+# 🔥 obtener imagen del tweet desde vxtwitter
+def obtener_imagen_tweet(tweet_id):
+    try:
+        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
+        r = requests.get(url, timeout=10).json()
+        if "mediaURLs" in r and len(r["mediaURLs"]) > 0:
+            return r["mediaURLs"][0]
+    except:
+        return None
+    return None
+
 # ─────────────────────────────
 
 def get_last_link(account):
@@ -38,24 +46,29 @@ def get_last_link(account):
         return f.read().strip()
 
 def save_last_link(account, link):
-    file = f"last_{account}.txt"
-    with open(file, "w") as f:
+    with open(f"last_{account}.txt", "w") as f:
         f.write(link)
 
 # ─────────────────────────────
-# TELEGRAM
-# ─────────────────────────────
 
-def send_telegram(chat_id, msg):
+def send_message(chat_id, text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={
         "chat_id": chat_id,
-        "text": msg,
+        "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": False
+        "disable_web_page_preview": True
     })
 
-# Emojis por medio
+def send_photo(chat_id, caption, photo):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "photo": photo,
+        "caption": caption,
+        "parse_mode": "HTML"
+    })
+
 EMOJIS = {
     "ReutersBiz": "🟡",
     "ReuterChina": "🐉",
@@ -66,12 +79,9 @@ EMOJIS = {
 }
 
 # ─────────────────────────────
-# MAIN LOOP
-# ─────────────────────────────
 
 for account, chat_id in ACCOUNTS.items():
-    feed_url = f"https://nitter.net/{account}/rss"
-    feed = feedparser.parse(feed_url)
+    feed = feedparser.parse(f"https://nitter.net/{account}/rss")
 
     last_link = get_last_link(account)
     new_posts = []
@@ -85,18 +95,25 @@ for account, chat_id in ACCOUNTS.items():
         new_posts.reverse()
 
         for post in new_posts:
-            texto = limpiar_texto(post.title)
-            tweet_fx = convertir_a_fxtwitter(post.link)
+            texto, articulo = limpiar_texto_y_link(post.title)
+            tweet_id = get_tweet_id(post.link)
+            tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
             emoji = EMOJIS.get(account, "📰")
 
-            mensaje = f"""
+            caption = f"""
 <b>{emoji} {account.upper()}</b>
 
 {texto}
 
-<a href="{tweet_fx}">🔗 Ver tweet</a>
+<a href="{tweet_fx}">🐦 Ver tweet</a>
+<a href="{articulo}">📰 Leer artículo</a>
 """
 
-            send_telegram(chat_id, mensaje)
+            imagen = obtener_imagen_tweet(tweet_id)
+
+            if imagen:
+                send_photo(chat_id, caption, imagen)
+            else:
+                send_message(chat_id, caption)
 
         save_last_link(account, new_posts[-1].link)
