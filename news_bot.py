@@ -1,50 +1,114 @@
-import feedparser
 import requests
 import os
+import re
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-ACCOUNTS = {
-    "ReutersBiz": "-1003749568108",
-    "ReuterChina": "-1003724765047",
-    "business": "-1003760302624",
-    "WSJ": "-1003861476711",
-    "FT": "-1003561464477",
-    "TheEconomist": "-1003897620126"
+# Canales de Telegram
+CHANNELS = {
+    "Reuters": os.environ["CHAT_ID_REUTERS"],
+    "WSJ": os.environ["CHAT_ID_WSJ"],
+    "FT": os.environ["CHAT_ID_FT"],
+    "TheEconomist": os.environ["CHAT_ID_ECONOMIST"],
+    "ReutersChina": os.environ["CHAT_ID_REUTERS_CHINA"]
 }
 
-def get_last_link(account):
-    file = f"last_{account}.txt"
-    if not os.path.exists(file):
-        return ""
-    with open(file, "r") as f:
-        return f.read().strip()
+# Usuarios de X a vigilar (RSSHub)
+FEEDS = {
+    "Reuters": "https://rsshub.app/twitter/user/Reuters",
+    "WSJ": "https://rsshub.app/twitter/user/WSJ",
+    "FT": "https://rsshub.app/twitter/user/FT",
+    "TheEconomist": "https://rsshub.app/twitter/user/TheEconomist",
+    "ReutersChina": "https://rsshub.app/twitter/user/ReutersChina"
+}
 
-def save_last_link(account, link):
-    file = f"last_{account}.txt"
-    with open(file, "w") as f:
-        f.write(link)
+# Emojis por medio
+EMOJIS = {
+    "Reuters": "🟡",
+    "WSJ": "🔵",
+    "FT": "🟣",
+    "TheEconomist": "🔴",
+    "ReutersChina": "🐉"
+}
 
-def send_telegram(chat_id, msg):
+# ─────────────────────────────────────────────
+
+def limpiar_tweet(texto):
+    return re.sub(r'http\S+', '', texto).strip()
+
+def format_tweet(source, text, url):
+    emoji = EMOJIS.get(source, "📰")
+    return f"""
+<b>{emoji} {source.upper()}</b>
+
+{text}
+
+<a href="{url}">🔗 Leer en X</a>
+"""
+
+def send_telegram(chat_id, message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": msg})
+    data = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False
+    }
+    requests.post(url, data=data)
 
-for account, chat_id in ACCOUNTS.items():
-    feed_url = f"https://nitter.net/{account}/rss"
-    feed = feedparser.parse(feed_url)
+# Guardar último tweet enviado
+def load_last(source):
+    file = f"last_{source}.txt"
+    if os.path.exists(file):
+        with open(file, "r") as f:
+            return f.read().strip()
+    return ""
 
-    last_link = get_last_link(account)
-    new_posts = []
+def save_last(source, tweet_id):
+    with open(f"last_{source}.txt", "w") as f:
+        f.write(tweet_id)
 
-    for entry in feed.entries:
-        if entry.link == last_link:
+# ─────────────────────────────────────────────
+
+def check_feed(source, feed_url, chat_id):
+    print(f"Checking {source}...")
+
+    last_id = load_last(source)
+
+    r = requests.get(feed_url)
+    if r.status_code != 200:
+        print("RSS error")
+        return
+
+    items = r.text.split("<item>")[1:]
+
+    new_items = []
+
+    for item in items:
+        link = item.split("<link>")[1].split("</link>")[0]
+        tweet_id = link.split("/")[-1]
+
+        if tweet_id == last_id:
             break
-        new_posts.append(entry)
 
-    if new_posts:
-        new_posts.reverse()
-        for post in new_posts:
-            message = f"n{post.title}\n{post.link}"
-            send_telegram(chat_id, message)
+        title = item.split("<title>")[1].split("</title>")[0]
+        title = limpiar_tweet(title)
 
-        save_last_link(account, new_posts[-1].link)
+        new_items.append((tweet_id, title, link))
+
+    # Enviar en orden cronológico correcto
+    new_items.reverse()
+
+    for tweet_id, title, link in new_items:
+        msg = format_tweet(source, title, link)
+        send_telegram(chat_id, msg)
+        save_last(source, tweet_id)
+
+# ─────────────────────────────────────────────
+
+def main():
+    for source in FEEDS:
+        check_feed(source, FEEDS[source], CHANNELS[source])
+
+if __name__ == "__main__":
+    main()
