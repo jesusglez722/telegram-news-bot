@@ -23,51 +23,63 @@ NITTER_INSTANCES = [
     "https://nitter.perennialte.ch"
 ]
 
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+
 def find_real_link(entry):
-    """Busca el enlace al artículo original dentro de la descripción"""
     links = re.findall(r'https?://[^\s<>"]+', entry.description)
     for link in links:
         if 'nitter' not in link and 't.co' not in link:
             return link.split('<')[0].split('"')[0]
     return entry.link
 
-def get_proxied_image_url(image_url):
-    """Encapsula la URL de la imagen en el proxy wsrv.nl para saltar bloqueos"""
-    if image_url and image_url.startswith('http'):
-        # wsrv.nl es un proxy gratuito y fiable de imágenes
-        return f"https://wsrv.nl/?url={image_url}"
+def get_og_image(url):
+    """Visita la noticia y extrae la imagen de vista previa original"""
+    try:
+        if 'nitter' in url: return None
+        response = requests.get(url, headers=HEADERS, timeout=10)
+        # Buscamos la etiqueta meta og:image que usan todos los periódicos
+        image_match = re.search(r'<meta [^>]*property="og:image" [^>]*content="([^"]+)"', response.text)
+        if not image_match:
+            image_match = re.search(r'<meta [^>]*content="([^"]+)" [^>]*property="og:image"', response.text)
+        
+        if image_match:
+            img_url = image_match.group(1)
+            # Algunas webs usan proxies para sus imágenes, las limpiamos
+            if img_url.startswith('http'):
+                return img_url
+    except:
+        pass
     return None
 
 def send_telegram(chat_id, msg, link, image_url=None):
     reply_markup = {"inline_keyboard": [[{"text": "Ver Artículo ↗️", "url": link}]]}
-    
-    # Preparamos los parámetros básicos del mensaje
     payload = {
         "chat_id": chat_id,
         "reply_markup": json.dumps(reply_markup),
         "parse_mode": "HTML"
     }
 
-    # Intentamos usar el proxy de imágenes si existe URL
-    proxied_image = get_proxied_image_url(image_url)
-    
-    if proxied_image:
+    # Intentamos primero la imagen del artículo, si no, la de Nitter con proxy
+    final_image = get_og_image(link) or (f"https://wsrv.nl/?url={image_url}" if image_url else None)
+
+    if final_image:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        # Para sendPhoto, el texto debe ir en 'caption'
-        payload["photo"] = proxied_image
+        payload["photo"] = final_image
         payload["caption"] = msg
         r = requests.post(url, data=payload)
         if r.status_code == 200:
-            print("✅ Noticia enviada con imagen (vía proxy).")
+            print("✅ Enviado con imagen.")
             return
+        else:
+            print(f"⚠️ Falló imagen ({r.status_code}), enviando texto...")
 
-    # Si no hay imagen o el envío falló, enviamos solo texto
+    # Fallback: Solo texto
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload["text"] = msg
     requests.post(url, data=payload)
-    print("✅ Noticia enviada (solo texto).")
+    print("✅ Enviado (solo texto).")
 
-def extract_image(entry, base_url):
+def extract_nitter_image(entry, base_url):
     if 'description' in entry:
         img_match = re.search(r'<img [^>]*src="([^"]+)"', entry.description)
         if img_match:
@@ -88,14 +100,12 @@ def fetch_feed(account):
 
 def get_last_link(account):
     file = f"last_{account}.txt"
-    if not os.path.exists(file): return ""
-    with open(file, "r") as f: return f.read().strip()
+    return open(file, "r").read().strip() if os.path.exists(file) else ""
 
 def save_last_link(account, link):
-    file = f"last_{account}.txt"
-    with open(file, "w") as f: f.write(link)
+    with open(f"last_{account}.txt", "w") as f: f.write(link)
 
-# --- BUCLE PRINCIPAL ---
+# --- BUCLE ---
 for account, chat_id in ACCOUNTS.items():
     print(f"--- {account} ---")
     feed, working_instance = fetch_feed(account)
@@ -107,28 +117,19 @@ for account, chat_id in ACCOUNTS.items():
     for entry in feed.entries:
         entry_id = entry.link.split('/')[-1] if '/' in entry.link else entry.link
         last_id = last_link.split('/')[-1] if '/' in last_link else last_link
-        
-        if entry_id == last_id:
-            break
+        if entry_id == last_id: break
         new_posts.append(entry)
 
     if new_posts:
         new_posts.reverse()
         for post in new_posts:
-            # 1. Buscamos el link real (Bloomberg, etc)
             real_link = find_real_link(post)
-            
-            # 2. LIMPIEZA DEL TEXTO (NUEVO DISEÑO)
-            # Quitamos todos los enlaces basura y escapamos HTML
+            # Limpieza: sin nombre de cuenta, solo titular
             clean_title = html.escape(re.sub(r'https?://\S+', '', post.title).strip())
             
-            # Formato final del mensaje: solo el titular limpio
-            message = clean_title 
+            # Buscamos imagen en Nitter por si el artículo no tiene
+            nitter_img = extract_nitter_image(post, working_instance)
             
-            # 3. Procesamos la imagen
-            image_url = extract_image(post, working_instance)
-            
-            # 4. Enviamos a Telegram
-            send_telegram(chat_id, message, real_link, image_url)
+            send_telegram(chat_id, clean_title, real_link, nitter_img)
 
         save_last_link(account, new_posts[-1].link)
