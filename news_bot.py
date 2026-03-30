@@ -1,118 +1,99 @@
+import feedparser
 import requests
 import os
 import re
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Canales de Telegram
-CHANNELS = {
+ACCOUNTS = {
     "ReutersBiz": "-1003749568108",
-    "ReutersChina": "-1003724765047",
+    "ReuterChina": "-1003724765047",
     "business": "-1003760302624",
     "WSJ": "-1003861476711",
     "FT": "-1003561464477",
     "TheEconomist": "-1003897620126"
 }
 
-# Usuarios de X a vigilar (RSSHub)
-FEEDS = {
-    "ReutersBiz": "https://rsshub.app/twitter/user/ReutersBiz",
-    "ReutersChina": "https://rsshub.app/twitter/user/ReutersChina",
-    "business": "https://rsshub.app/twitter/user/business",
-    "WSJ": "https://rsshub.app/twitter/user/WSJ",
-    "FT": "https://rsshub.app/twitter/user/FT",
-    "TheEconomist": "https://rsshub.app/twitter/user/TheEconomist"
-}
+# ─────────────────────────────
+# LIMPIAR TEXTO DEL TWEET
+# ─────────────────────────────
+
+def limpiar_tweet_y_link(texto):
+    # Buscar todos los links del tweet
+    links = re.findall(r'https?://\S+', texto)
+
+    articulo = ""
+    if links:
+        articulo = links[0]  # el PRIMER link es el artículo
+
+    # Eliminar TODOS los links del texto
+    texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
+
+    return texto_limpio, articulo
+
+# ─────────────────────────────
+
+def get_last_link(account):
+    file = f"last_{account}.txt"
+    if not os.path.exists(file):
+        return ""
+    with open(file, "r") as f:
+        return f.read().strip()
+
+def save_last_link(account, link):
+    file = f"last_{account}.txt"
+    with open(file, "w") as f:
+        f.write(link)
+
+def send_telegram(chat_id, msg):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "text": msg,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": False
+    })
 
 # Emojis por medio
 EMOJIS = {
-    "ReutersBiz": "🟠",
-    "ReutersChina": "🐉",
-    "business": "🟡",
-    "WSJ": "⚪",
-    "FT": "🟤",
-    "TheEconomist": "🔴",
-    
+    "ReutersBiz": "🟡",
+    "ReuterChina": "🐉",
+    "business": "💼",
+    "WSJ": "🔵",
+    "FT": "🟣",
+    "TheEconomist": "🔴"
 }
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────
 
-def limpiar_tweet(texto):
-    return re.sub(r'http\S+', '', texto).strip()
+for account, chat_id in ACCOUNTS.items():
+    feed_url = f"https://nitter.net/{account}/rss"
+    feed = feedparser.parse(feed_url)
 
-def format_tweet(source, text, url):
-    emoji = EMOJIS.get(source, "📰")
-    return f"""
-<b>{emoji} {source.upper()}</b>
+    last_link = get_last_link(account)
+    new_posts = []
 
-{text}
+    for entry in feed.entries:
+        if entry.link == last_link:
+            break
+        new_posts.append(entry)
 
-<a href="{url}">🔗 Leer en X</a>
+    if new_posts:
+        new_posts.reverse()
+
+        for post in new_posts:
+            texto, articulo = limpiar_tweet_y_link(post.title)
+
+            emoji = EMOJIS.get(account, "📰")
+
+            mensaje = f"""
+<b>{emoji} {account.upper()}</b>
+
+{texto}
+
+<a href="{articulo}">🔗 Leer artículo</a>
 """
 
-def send_telegram(chat_id, message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": False
-    }
-    requests.post(url, data=data)
+            send_telegram(chat_id, mensaje)
 
-# Guardar último tweet enviado
-def load_last(source):
-    file = f"last_{source}.txt"
-    if os.path.exists(file):
-        with open(file, "r") as f:
-            return f.read().strip()
-    return ""
-
-def save_last(source, tweet_id):
-    with open(f"last_{source}.txt", "w") as f:
-        f.write(tweet_id)
-
-# ─────────────────────────────────────────────
-
-def check_feed(source, feed_url, chat_id):
-    print(f"Checking {source}...")
-
-    last_id = load_last(source)
-
-    r = requests.get(feed_url)
-    if r.status_code != 200:
-        print("RSS error")
-        return
-
-    items = r.text.split("<item>")[1:]
-
-    new_items = []
-
-    for item in items:
-        link = item.split("<link>")[1].split("</link>")[0]
-        tweet_id = link.split("/")[-1]
-
-        if tweet_id == last_id:
-            break
-
-        title = item.split("<title>")[1].split("</title>")[0]
-        title = limpiar_tweet(title)
-
-        new_items.append((tweet_id, title, link))
-
-    # Enviar en orden cronológico correcto
-    new_items.reverse()
-
-    for tweet_id, title, link in new_items:
-        msg = format_tweet(source, title, link)
-        send_telegram(chat_id, msg)
-        save_last(source, tweet_id)
-
-# ─────────────────────────────────────────────
-
-def main():
-    for source in FEEDS:
-        check_feed(source, FEEDS[source], CHANNELS[source])
-
-if __name__ == "__main__":
-    main()
+        save_last_link(account, new_posts[-1].link)
