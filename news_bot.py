@@ -3,7 +3,7 @@ import requests
 import os
 import json
 import re
-import html # Importante para limpiar el texto
+import html
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -16,6 +16,15 @@ ACCOUNTS = {
     "TheEconomist": "-1003897620126"
 }
 
+# Lista de instancias para rotar si una falla
+NITTER_INSTANCES = [
+    "https://nitter.poast.org",
+    "https://nitter.privacydev.net",
+    "https://nitter.projectsegfau.lt",
+    "https://nitter.perennialte.ch",
+    "https://nitter.homeoncloud.com"
+]
+
 def get_last_link(account):
     file = f"last_{account}.txt"
     if not os.path.exists(file): return ""
@@ -27,8 +36,6 @@ def save_last_link(account, link):
 
 def send_telegram(chat_id, msg, link, image_url=None):
     reply_markup = {"inline_keyboard": [[{"text": "Source ↗️", "url": link}]]}
-    
-    # Preparamos la base del envío
     payload = {
         "chat_id": chat_id,
         "reply_markup": json.dumps(reply_markup),
@@ -43,12 +50,9 @@ def send_telegram(chat_id, msg, link, image_url=None):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload["text"] = msg
 
-    r = requests.post(url, data=payload)
-    if r.status_code != 200:
-        print(f"Error enviando a Telegram: {r.text}") # Esto nos dirá qué falló exactamente
+    requests.post(url, data=payload)
 
 def extract_image(entry, base_url):
-    """Extrae la imagen y asegura que sea una URL completa"""
     if 'description' in entry:
         img_match = re.search(r'<img [^>]*src="([^"]+)"', entry.description)
         if img_match:
@@ -58,23 +62,28 @@ def extract_image(entry, base_url):
             return img_url
     return None
 
-# Instancia de Nitter (puedes cambiarla si falla)
-NITTER_BASE = "https://nitter.poast.org"
+def fetch_feed(account):
+    """Prueba diferentes instancias hasta obtener el feed"""
+    for instance in NITTER_INSTANCES:
+        url = f"{instance}/{account}/rss"
+        print(f"Probando {instance}...")
+        feed = feedparser.parse(url)
+        if feed.entries:
+            return feed, instance
+    return None, None
 
 for account, chat_id in ACCOUNTS.items():
     print(f"--- Revisando {account} ---")
-    feed_url = f"{NITTER_BASE}/{account}/rss"
-    feed = feedparser.parse(feed_url)
+    feed, working_instance = fetch_feed(account)
 
-    if not feed.entries:
-        print(f"Aviso: No se pudieron obtener entradas de {account}. Nitter podría estar caído.")
+    if not feed:
+        print(f"❌ Error: Todas las instancias de Nitter fallaron para {account}.")
         continue
 
     last_link = get_last_link(account)
     new_posts = []
 
     for entry in feed.entries:
-        # Limpiamos el link para comparar (quitamos el dominio por si cambió)
         entry_id = entry.link.split('/')[-1] if '/' in entry.link else entry.link
         last_id = last_link.split('/')[-1] if '/' in last_link else last_link
         
@@ -82,16 +91,14 @@ for account, chat_id in ACCOUNTS.items():
             break
         new_posts.append(entry)
 
-    print(f"Nuevas noticias: {len(new_posts)}")
+    print(f"✅ Éxito usando {working_instance}. Noticias nuevas: {len(new_posts)}")
 
     if new_posts:
         new_posts.reverse()
         for post in new_posts:
-            # LIMPIEZA CRÍTICA: Escapamos el texto para que no rompa el HTML de Telegram
             clean_title = html.escape(re.sub(r'http\S+', '', post.title).strip())
             message = f"<b>{account}</b>\n\n{clean_title}"
-            
-            image_url = extract_image(post, NITTER_BASE)
+            image_url = extract_image(post, working_instance)
             send_telegram(chat_id, message, post.link, image_url)
 
         save_last_link(account, new_posts[-1].link)
