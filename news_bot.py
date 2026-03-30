@@ -42,15 +42,37 @@ def send_telegram(chat_id, msg, link, image_url=None):
         "parse_mode": "HTML"
     }
 
+    # Intentamos enviar con foto si existe
     if image_url and image_url.startswith('http'):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
         payload["photo"] = image_url
         payload["caption"] = msg
+        print(f"Intentando enviar foto a {chat_id}...")
     else:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload["text"] = msg
+        print(f"Intentando enviar texto a {chat_id}...")
 
-    requests.post(url, data=payload)
+    response = requests.post(url, data=payload)
+    
+    # ESTO NOS DIRÁ EL ERROR REAL
+    if response.status_code == 200:
+        print("✅ Mensaje enviado correctamente a Telegram.")
+    else:
+        print(f"❌ ERROR TELEGRAM ({response.status_code}): {response.text}")
+        
+        # Si falló la foto, reintentamos solo con texto por si la URL de la imagen era el problema
+        if image_url:
+            print("Reintentando sin imagen...")
+            url_text = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            payload_text = {
+                "chat_id": chat_id,
+                "text": msg,
+                "reply_markup": json.dumps(reply_markup),
+                "parse_mode": "HTML"
+            }
+            re_response = requests.post(url_text, data=payload_text)
+            print(f"Resultado reintento: {re_response.status_code}")
 
 def extract_image(entry, base_url):
     if 'description' in entry:
