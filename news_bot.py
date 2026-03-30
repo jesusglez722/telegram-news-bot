@@ -5,85 +5,95 @@ import re
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-ACCOUNTS = {
-    "ReutersBiz": "-1003749568108",
-    "ReuterChina": "-1003724765047",
-    "business": "-1003760302624",
-    "WSJ": "-1003861476711",
-    "FT": "-1003561464477",
-    "TheEconomist": "-1003897620126"
+FEEDS = {
+    "ReutersBiz": {
+        "url": "https://www.reuters.com/business/rss",
+        "chat": "-1003749568108",
+        "emoji": "🟠"
+    },
+    "ReutersChina": {
+        "url": "https://news.google.com/rss/search?q=site:reuters.com+China&hl=en-US&gl=US&ceid=US:en",
+        "chat": "-1003724765047",
+        "emoji": "🟠"
+    },
+    "Bloomberg": {
+        "url": "https://feeds.bloomberg.com/economics/news.rss",
+        "chat": "-1003760302624",
+        "emoji": "🟡"
+    },
+    "WSJ": {
+        "url": "https://feeds.content.dowjones.io/public/rss/mw_business",
+        "chat": "-1003861476711",
+        "emoji": "⚪"
+    },
+    "FT": {
+        "url": "https://www.ft.com/rss/home",
+        "chat": "-1003561464477",
+        "emoji": "🟤"
+    },
+    "TheEconomist": {
+        "url": "https://www.economist.com/latest/rss.xml",
+        "chat": "-1003897620126",
+        "emoji": "🔴"
+    }
 }
 
 # ─────────────────────────────
 
-def limpiar_texto_y_link(texto):
-    links = re.findall(r'https?://\S+', texto)
-    articulo = links[0] if links else ""
-    texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
-    return texto_limpio, articulo
+def limpiar_html(texto):
+    limpio = re.sub("<.*?>", "", texto)
+    return limpio.strip()
 
-def get_tweet_id(link):
-    return link.split("/")[-1]
-
-# 🔥 obtener imagen del tweet desde vxtwitter
-def obtener_imagen_tweet(tweet_id):
-    try:
-        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
-        r = requests.get(url, timeout=10).json()
-        if "mediaURLs" in r and len(r["mediaURLs"]) > 0:
-            return r["mediaURLs"][0]
-    except:
-        return None
+def obtener_imagen(entry):
+    # Distintos formatos RSS usan campos distintos
+    if "media_content" in entry:
+        return entry.media_content[0]["url"]
+    if "links" in entry:
+        for l in entry.links:
+            if "image" in l.type:
+                return l.href
     return None
 
 # ─────────────────────────────
 
-def get_last_link(account):
-    file = f"last_{account}.txt"
+def get_last_link(source):
+    file = f"last_{source}.txt"
     if not os.path.exists(file):
         return ""
-    with open(file, "r") as f:
-        return f.read().strip()
+    return open(file).read().strip()
 
-def save_last_link(account, link):
-    with open(f"last_{account}.txt", "w") as f:
-        f.write(link)
+def save_last_link(source, link):
+    open(f"last_{source}.txt", "w").write(link)
 
 # ─────────────────────────────
-
-def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    })
 
 def send_photo(chat_id, caption, photo):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "photo": photo,
-        "caption": caption,
-        "parse_mode": "HTML"
-    })
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+        data={
+            "chat_id": chat_id,
+            "photo": photo,
+            "caption": caption,
+            "parse_mode": "HTML"
+        }
+    )
 
-EMOJIS = {
-    "ReutersBiz": "🟡",
-    "ReuterChina": "🐉",
-    "business": "💼",
-    "WSJ": "🔵",
-    "FT": "🟣",
-    "TheEconomist": "🔴"
-}
+def send_message(chat_id, text):
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }
+    )
 
 # ─────────────────────────────
 
-for account, chat_id in ACCOUNTS.items():
-    feed = feedparser.parse(f"https://nitter.net/{account}/rss")
-
-    last_link = get_last_link(account)
+for source, data in FEEDS.items():
+    feed = feedparser.parse(data["url"])
+    last_link = get_last_link(source)
     new_posts = []
 
     for entry in feed.entries:
@@ -95,25 +105,21 @@ for account, chat_id in ACCOUNTS.items():
         new_posts.reverse()
 
         for post in new_posts:
-            texto, articulo = limpiar_texto_y_link(post.title)
-            tweet_id = get_tweet_id(post.link)
-            tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
-            emoji = EMOJIS.get(account, "📰")
+            titulo = limpiar_html(post.title)
+            link = post.link
+            imagen = obtener_imagen(post)
 
             caption = f"""
-<b>{emoji} {account.upper()}</b>
+<b>{data['emoji']} {source.upper()}</b>
 
-{texto}
+{titulo}
 
-<a href="{tweet_fx}">🐦 Ver tweet</a>
-<a href="{articulo}">📰 Leer artículo</a>
+<a href="{link}">📰 Leer noticia</a>
 """
 
-            imagen = obtener_imagen_tweet(tweet_id)
-
             if imagen:
-                send_photo(chat_id, caption, imagen)
+                send_photo(data["chat"], caption, imagen)
             else:
-                send_message(chat_id, caption)
+                send_message(data["chat"], caption)
 
-        save_last_link(account, new_posts[-1].link)
+        save_last_link(source, new_posts[-1].link)
