@@ -2,33 +2,37 @@ import requests
 import os
 import re
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Canales de Telegram
 CHANNELS = {
-    "Reuters": os.environ["CHAT_ID_REUTERS"],
-    "WSJ": os.environ["CHAT_ID_WSJ"],
-    "FT": os.environ["CHAT_ID_FT"],
-    "TheEconomist": os.environ["CHAT_ID_ECONOMIST"],
-    "ReutersChina": os.environ["CHAT_ID_REUTERS_CHINA"]
+    "ReutersBiz": "-1003749568108",
+    "ReutersChina": "-1003724765047",
+    "business": "-1003760302624",
+    "WSJ": "-1003861476711",
+    "FT": "-1003561464477",
+    "TheEconomist": "-1003897620126"
 }
 
 # Usuarios de X a vigilar (RSSHub)
 FEEDS = {
-    "Reuters": "https://rsshub.app/twitter/user/Reuters",
+    "ReutersBiz": "https://rsshub.app/twitter/user/ReutersBiz",
+    "ReutersChina": "https://rsshub.app/twitter/user/ReutersChina",
+    "business": "https://rsshub.app/twitter/user/business",
     "WSJ": "https://rsshub.app/twitter/user/WSJ",
     "FT": "https://rsshub.app/twitter/user/FT",
-    "TheEconomist": "https://rsshub.app/twitter/user/TheEconomist",
-    "ReutersChina": "https://rsshub.app/twitter/user/ReutersChina"
+    "TheEconomist": "https://rsshub.app/twitter/user/TheEconomist"
 }
 
 # Emojis por medio
 EMOJIS = {
-    "Reuters": "🟡",
-    "WSJ": "🔵",
-    "FT": "🟣",
+    "ReutersBiz": "🟠",
+    "ReutersChina": "🐉",
+    "business": "🟡",
+    "WSJ": "⚪",
+    "FT": "🟤",
     "TheEconomist": "🔴",
-    "ReutersChina": "🐉"
+    
 }
 
 # ─────────────────────────────────────────────
