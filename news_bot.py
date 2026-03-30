@@ -5,8 +5,8 @@ import re
 import json
 import html
 
-# Configuración
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 ACCOUNTS = {
     "ReutersBiz": "-1003749568108",
     "ReuterChina": "-1003724765047",
@@ -25,14 +25,25 @@ def save_last_link(account, link):
     file = f"last_{account}.txt"
     with open(file, "w") as f: f.write(link)
 
-def send_telegram(chat_id, text, button_url):
-    """Envía el mensaje usando el botón elegante"""
+def find_article_link(post):
+    """Busca un enlace que no sea de nitter en el post"""
+    # Buscamos en el título y en el resumen del RSS
+    texto_completo = post.title + " " + post.get('summary', '')
+    enlaces = re.findall(r'https?://[^\s<>"]+', texto_completo)
+    for url in enlaces:
+        if 'nitter' not in url and 't.co' not in url:
+            # Limpiamos posibles caracteres residuales al final del link
+            return url.split(')')[0].split(']')[0].split('<')[0]
+    return post.link # Si no hay otro, usamos el de nitter
+
+def send_telegram(chat_id, text, link):
+    """Envía el mensaje con un botón para ocultar el link largo"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     
-    # Configuración del botón
+    # Creamos el botón
     markup = {
         "inline_keyboard": [[
-            {"text": "Ver artículo completo ↗️", "url": button_url}
+            {"text": "Ver artículo completo ↗️", "url": link}
         ]]
     }
     
@@ -43,22 +54,12 @@ def send_telegram(chat_id, text, button_url):
         "parse_mode": "HTML"
     }
     
-    r = requests.post(url, data=payload)
-    return r.status_code
-
-# --- INICIO DEL PROCESO ---
-print("🚀 Iniciando el bot de noticias...")
+    requests.post(url, data=payload)
 
 for account, chat_id in ACCOUNTS.items():
-    print(f"🔎 Revisando: {account}")
-    
-    # Mantenemos nitter.net porque es el que te funciona bien
+    # Usamos nitter.net como en tu código original
     feed_url = f"https://nitter.net/{account}/rss"
     feed = feedparser.parse(feed_url)
-
-    if not feed.entries:
-        print(f"  ⚠️ No se han podido cargar noticias de {account}")
-        continue
 
     last_link = get_last_link(account)
     new_posts = []
@@ -68,26 +69,19 @@ for account, chat_id in ACCOUNTS.items():
             break
         new_posts.append(entry)
 
-    print(f"  ✨ Noticias nuevas: {len(new_posts)}")
-
     if new_posts:
         new_posts.reverse()
         for post in new_posts:
-            # 1. Extraer el enlace real del título si existe
-            # (Twitter/Nitter suelen poner el link de la noticia al final del titular)
-            enlaces = re.findall(r'https?://\S+', post.title)
-            button_link = enlaces[0] if enlaces else post.link
+            # 1. Buscamos el link real del periódico
+            original_url = find_article_link(post)
             
-            # 2. Limpiar el titular
-            # Quitamos los links del texto y el @usuario no lo incluimos
+            # 2. Limpiamos el título (quitamos enlaces de texto y el nombre de la cuenta)
+            # Quitamos cualquier URL que aparezca en el texto
             clean_title = re.sub(r'https?://\S+', '', post.title).strip()
-            # Escapamos caracteres especiales para que Telegram no falle
+            # Escapamos HTML para evitar errores con símbolos raros
             clean_title = html.escape(clean_title)
             
-            # Enviamos a Telegram
-            status = send_telegram(chat_id, clean_title, button_link)
-            print(f"  📤 Envío a {account}: {status}")
+            # 3. El mensaje ahora es solo el titular limpio
+            send_telegram(chat_id, clean_title, original_url)
 
         save_last_link(account, new_posts[-1].link)
-
-print("✅ Proceso terminado.")
