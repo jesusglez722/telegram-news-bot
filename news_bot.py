@@ -16,7 +16,7 @@ FEEDS = {
         "chat": "-1003724765047",
         "emoji": "🟠"
     },
-    "Business": {
+    "business": {
         "url": "https://feeds.bloomberg.com/economics/news.rss",
         "chat": "-1003760302624",
         "emoji": "🟡"
