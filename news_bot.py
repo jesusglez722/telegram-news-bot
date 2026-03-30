@@ -7,27 +7,27 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FEEDS = {
     "ReutersBiz": {
-        "url": "https://www.reuters.com/business/rss",
+        "url": "https://news.google.com/rss/search?q=site:reuters.com/business&hl=en-US&gl=US&ceid=US:en",
         "chat": "-1003749568108",
         "emoji": "🟠"
     },
     "ReutersChina": {
-        "url": "https://news.google.com/rss/search?q=site:reuters.com+China&hl=en-US&gl=US&ceid=US:en",
+        "url": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
         "chat": "-1003724765047",
         "emoji": "🟠"
     },
     "business": {
-        "url": "https://feeds.bloomberg.com/economics/news.rss",
+        "url": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
         "chat": "-1003760302624",
         "emoji": "🟡"
     },
     "WSJ": {
-        "url": "https://feeds.content.dowjones.io/public/rss/mw_business",
+        "url": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
         "chat": "-1003861476711",
         "emoji": "⚪"
     },
     "FT": {
-        "url": "https://www.ft.com/rss/home",
+        "url": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
         "chat": "-1003561464477",
         "emoji": "🟤"
     },
