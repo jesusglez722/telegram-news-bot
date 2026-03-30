@@ -44,7 +44,7 @@ for account, chat_id in ACCOUNTS.items():
     if new_posts:
         new_posts.reverse()
         for post in new_posts:
-            message = f"📰 @{account}\n{post.title}\n{post.link}"
+            message = f"n{post.title}\n{post.link}"
             send_telegram(chat_id, message)
 
         save_last_link(account, new_posts[-1].link)
