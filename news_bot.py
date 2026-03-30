@@ -15,20 +15,13 @@ ACCOUNTS = {
 }
 
 # ─────────────────────────────
-# LIMPIAR TEXTO DEL TWEET
+# LIMPIAR TEXTO Y EXTRAER LINK DEL ARTÍCULO
 # ─────────────────────────────
 
 def limpiar_tweet_y_link(texto):
-    # Buscar todos los links del tweet
     links = re.findall(r'https?://\S+', texto)
-
-    articulo = ""
-    if links:
-        articulo = links[0]  # el PRIMER link es el artículo
-
-    # Eliminar TODOS los links del texto
+    articulo = links[0] if links else ""
     texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
-
     return texto_limpio, articulo
 
 # ─────────────────────────────
@@ -45,6 +38,10 @@ def save_last_link(account, link):
     with open(file, "w") as f:
         f.write(link)
 
+# ─────────────────────────────
+# TELEGRAM
+# ─────────────────────────────
+
 def send_telegram(chat_id, msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={
@@ -52,6 +49,15 @@ def send_telegram(chat_id, msg):
         "text": msg,
         "parse_mode": "HTML",
         "disable_web_page_preview": False
+    })
+
+def send_photo(chat_id, caption, image_url):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "photo": image_url,
+        "caption": caption,
+        "parse_mode": "HTML"
     })
 
 # Emojis por medio
@@ -83,7 +89,6 @@ for account, chat_id in ACCOUNTS.items():
 
         for post in new_posts:
             texto, articulo = limpiar_tweet_y_link(post.title)
-
             emoji = EMOJIS.get(account, "📰")
 
             mensaje = f"""
@@ -94,6 +99,17 @@ for account, chat_id in ACCOUNTS.items():
 <a href="{articulo}">🔗 Leer artículo</a>
 """
 
-            send_telegram(chat_id, mensaje)
+            # 🔥 NUEVO: enviar imagen si existe
+            imagen = None
+            if hasattr(post, "media_content"):
+                try:
+                    imagen = post.media_content[0]["url"]
+                except:
+                    imagen = None
+
+            if imagen:
+                send_photo(chat_id, mensaje, imagen)
+            else:
+                send_telegram(chat_id, mensaje)
 
         save_last_link(account, new_posts[-1].link)
