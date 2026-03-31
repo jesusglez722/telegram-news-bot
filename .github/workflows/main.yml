@@ -1,46 +1,25 @@
-name: Telegram News Bot
+name: Run News Bot
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: '*/15 * * * *'  # cada 30 min
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
-      pull-requests: write
-      
+
     steps:
-      - name: Descargar repo
-        uses: actions/checkout@v4
+      - name: Clonar repo
+        uses: actions/checkout@v3
 
       - name: Instalar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
       - name: Ejecutar bot
         run: python news_bot.py
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-
-      - name: Guardar estado
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
-          # 1. Añadimos los cambios que hizo el script
-          git add *.txt || true
-          
-          # 2. Hacemos commit si hay cambios
-          git commit -m "update last tweets" || true
-          
-          # 3. Traemos cambios remotos y subimos
-          git pull --rebase origin main
-          git push
