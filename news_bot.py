@@ -4,121 +4,108 @@ import os
 import re
 import json
 import html
-import hashlib
+from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
+# Configuración completa de tus 6 canales
 FEEDS = {
     "ReutersBiz": {
-        "url": "https://news.google.com/rss/search?q=site:reuters.com/business&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003749568108", "emoji": "🟠"
+        "url": "https://rsshub.app/reuters/business",
+        "chat": "-1003749568108"
     },
     "ReutersChina": {
-        "url": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003724765047", "emoji": "🟠"
+        "url": "https://rsshub.app/reuters/world/china",
+        "chat": "-1003724765047"
     },
-    "business": {
-        "url": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003760302624", "emoji": "🟡"
+    "Bloomberg": {
+        "url": "https://rsshub.app/bloomberg/economics",
+        "chat": "-1003760302624"
     },
     "WSJ": {
-        "url": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003861476711", "emoji": "⚪"
+        "url": "https://rsshub.app/wsj/en-us/business",
+        "chat": "-1003861476711"
     },
     "FT": {
-        "url": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003561464477", "emoji": "🟤"
+        "url": "https://rsshub.app/ft/home",
+        "chat": "-1003561464477"
     },
     "TheEconomist": {
         "url": "https://www.economist.com/latest/rss.xml",
-        "chat": "-1003897620126", "emoji": "🔴"
+        "chat": "-1003897620126"
     }
 }
 
-MAX_HISTORY = 500
-MAX_POSTS_PER_RUN = 5
-
-def limpiar_html(texto):
-    limpio = re.sub("<.*?>", "", texto)
-    limpio = re.sub(r" - [^-]+$", "", limpio)
-    return limpio.strip()
-
-def extraer_url_real_google(entry):
-    if "summary" in entry:
-        match = re.search(r'href="(https?://[^"]+)"', entry.summary)
-        if match: return match.group(1).split('?')[0].split('#')[0].lower()
-    return entry.link.split('?')[0].lower()
-
-def obtener_imagen_robusta(entry, url_real):
-    # TRUCO: Google News oculta una miniatura en el 'summary'
-    if "summary" in entry:
-        img_match = re.search(r'<img src="([^"]+)"', entry.summary)
-        if img_match:
-            img_url = img_match.group(1)
-            # Evitamos el logo de Google News
-            if "lh3.googleusercontent.com" in img_url or "google" not in img_url.lower():
-                return img_url
-
-    # Fallback para The Economist o si el anterior falla
-    if "media_content" in entry:
-        return entry.media_content[0]["url"]
-    
-    return None
-
-def load_sent_links(source):
+def get_last_link(source):
     file = f"sent_{source}.txt"
     if not os.path.exists(file): return set()
-    with open(file, "r", encoding="utf-8") as f:
-        return set(line.strip() for line in f.readlines())
+    with open(file, "r") as f: return set(line.strip() for line in f.readlines())
 
-def save_sent_links(source, links_set):
-    file = f"sent_{source}.txt"
-    links = list(links_set)[-MAX_HISTORY:]
-    with open(file, "w", encoding="utf-8") as f:
-        f.write("\n".join(links))
+def save_sent_links(source, links):
+    with open(f"sent_{source}.txt", "w") as f:
+        f.write("\n".join(list(links)[-100:]))
 
-def send_to_telegram(chat_id, caption, image=None):
-    if image:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        payload = {"chat_id": chat_id, "photo": image, "caption": caption, "parse_mode": "HTML"}
-    else:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": chat_id, "text": caption, "parse_mode": "HTML", "disable_web_page_preview": False}
+def extraer_imagen(entry):
+    """Busca la imagen en enclosures o dentro del HTML de la descripción"""
+    # 1. Enclosure (Standard RSS como The Economist)
+    if 'enclosures' in entry and entry.enclosures:
+        return entry.enclosures[0].get('url')
+    # 2. Etiqueta <img> en la descripción (Standard RSSHub)
+    if 'description' in entry:
+        img = re.search(r'<img [^>]*src="([^"]+)"', entry.description)
+        if img: return img.group(1)
+    return None
+
+def enviar_a_telegram(chat_id, titulo, link, img_url):
+    """Descarga la imagen y la sube a Telegram para evitar bloqueos de URL"""
+    markup = {"inline_keyboard": [[{"text": "Leer noticia completa ↗️", "url": link}]]}
     
-    r = requests.post(url, data=payload)
-    print(f"Status Telegram: {r.status_code}")
+    if img_url:
+        try:
+            # Bajamos la imagen a la memoria del bot
+            resp = requests.get(img_url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
+            if resp.status_code == 200:
+                bio = BytesIO(resp.content)
+                bio.name = 'post.jpg'
+                
+                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
+                    data={
+                        "chat_id": chat_id,
+                        "caption": titulo,
+                        "reply_markup": json.dumps(markup),
+                        "parse_mode": "HTML"
+                    },
+                    files={"photo": bio}
+                )
+                return
+        except Exception as e:
+            print(f"Error con imagen: {e}")
 
-# --- MAIN ---
+    # Fallback: Solo mensaje de texto si no hay imagen o falla la subida
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+        "chat_id": chat_id,
+        "text": titulo,
+        "reply_markup": json.dumps(markup),
+        "parse_mode": "HTML"
+    })
+
+# --- PROCESO PRINCIPAL ---
 for source, data in FEEDS.items():
-    print(f"Checking {source}...")
+    print(f"Procesando {source}...")
     feed = feedparser.parse(data["url"])
-    sent_hashes = load_sent_links(source)
-    nuevos = []
+    sent_links = get_last_link(source)
+    
+    # Procesamos solo los 5 más recientes para evitar saturar
+    for post in reversed(feed.entries[:5]):
+        link = post.link.split('?')[0]
+        if link in sent_links: continue
 
-    for entry in feed.entries:
-        url_real = extraer_url_real_google(entry)
-        titulo_limpio = limpiar_html(entry.title)
+        # Limpieza: quitamos el " - Reuters" del final y escapamos HTML
+        titulo = html.escape(re.sub(r" - [^-]+$", "", post.title).strip())
         
-        # SOLUCIÓN WSJ: Usamos un hash del título + URL para evitar repetidos
-        # A veces cambian la URL pero el título es idéntico
-        post_id = hashlib.md_id = hashlib.md5(f"{titulo_limpio}{url_real}".encode()).hexdigest()
-
-        if post_id in sent_hashes:
-            continue
-
-        entry.final_link = url_real
-        entry.post_id = post_id
-        nuevos.append(entry)
-        sent_hashes.add(post_id)
-
-    nuevos = nuevos[:MAX_POSTS_PER_RUN]
-
-    for post in reversed(nuevos):
-        titulo = limpiar_html(post.title)
-        link = post.final_link
-        imagen = obtener_imagen_robusta(post, link)
-
-        caption = f"<b>{data['emoji']} {source.upper()}</b>\n\n{titulo}\n\n<a href='{link}'>📰 Leer noticia</a>"
-        send_to_telegram(data["chat"], caption, imagen)
-
-    save_sent_links(source, sent_hashes)
+        imagen = extraer_imagen(post)
+        enviar_a_telegram(data["chat"], titulo, link, imagen)
+        
+        sent_links.add(link)
+    
+    save_sent_links(source, sent_links)
