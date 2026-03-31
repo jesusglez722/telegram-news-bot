@@ -2,6 +2,7 @@ import feedparser
 import requests
 import os
 import re
+import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -25,7 +26,7 @@ def limpiar_texto_y_link(texto):
 def get_tweet_id(link):
     return link.split("/")[-1]
 
-# 🔥 obtener imagen del tweet desde vxtwitter
+# 🖼️ imagen del tweet (vxtwitter)
 def obtener_imagen_tweet(tweet_id):
     try:
         url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
@@ -50,33 +51,36 @@ def save_last_link(account, link):
         f.write(link)
 
 # ─────────────────────────────
+# 🔘 BOTONES TELEGRAM
 
-def send_message(chat_id, text):
+def crear_botones(tweet_url, articulo_url):
+    keyboard = {
+        "inline_keyboard": [[
+            {"text": "🐦 Ver tweet", "url": tweet_url},
+            {"text": "📰 Leer artículo", "url": articulo_url}
+        ]]
+    }
+    return json.dumps(keyboard)
+
+def send_message(chat_id, text, reply_markup=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={
         "chat_id": chat_id,
         "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup
     })
 
-def send_photo(chat_id, caption, photo):
+def send_photo(chat_id, caption, photo, reply_markup=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     requests.post(url, data={
         "chat_id": chat_id,
         "photo": photo,
         "caption": caption,
-        "parse_mode": "HTML"
+        "parse_mode": "HTML",
+        "reply_markup": reply_markup
     })
-
-EMOJIS = {
-    "ReutersBiz": "🟡",
-    "ReuterChina": "🐉",
-    "business": "💼",
-    "WSJ": "🔵",
-    "FT": "🟣",
-    "TheEconomist": "🔴"
-}
 
 # ─────────────────────────────
 
@@ -98,22 +102,17 @@ for account, chat_id in ACCOUNTS.items():
             texto, articulo = limpiar_texto_y_link(post.title)
             tweet_id = get_tweet_id(post.link)
             tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
-            emoji = EMOJIS.get(account, "📰")
 
-            caption = f"""
-<b>{emoji} {account.upper()}</b>
+            botones = crear_botones(tweet_fx, articulo)
 
-{texto}
-
-<a href="{tweet_fx}">🐦 Ver tweet</a>
-<a href="{articulo}">📰 Leer artículo</a>
-"""
+            # 🧼 SOLO titular ahora
+            caption = f"{texto}"
 
             imagen = obtener_imagen_tweet(tweet_id)
 
             if imagen:
-                send_photo(chat_id, caption, imagen)
+                send_photo(chat_id, caption, imagen, botones)
             else:
-                send_message(chat_id, caption)
+                send_message(chat_id, caption, botones)
 
         save_last_link(account, new_posts[-1].link)
