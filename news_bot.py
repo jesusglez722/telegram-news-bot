@@ -41,61 +41,61 @@ FEEDS = {
 MAX_HISTORY = 300
 MAX_POSTS_PER_RUN = 5
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9"
+}
+
 # ─────────────────────────────
-# LIMPIEZA TEXTO / URL
+# LIMPIEZA
 # ─────────────────────────────
 
 def limpiar_html(texto):
-    limpio = re.sub("<.*?>", "", texto)
-    return limpio.strip()
+    return re.sub("<.*?>", "", texto).strip()
 
-def limpiar_url_google(link):
+def limpiar_url(link):
     return link.split("?")[0]
 
 # ─────────────────────────────
-# EXTRAER URL REAL GOOGLE NEWS
+# URL REAL GOOGLE NEWS
 # ─────────────────────────────
 
 def extraer_url_real_google(entry):
     if "news.google.com" not in entry.link:
         return entry.link
-    
+
     if "summary" in entry:
         match = re.search(r'href="(https?://[^"]+)"', entry.summary)
         if match:
             return match.group(1)
-    
+
     return entry.link
 
 # ─────────────────────────────
-# IMÁGENES
+# EXTRAER IMAGEN REAL DEL ARTÍCULO
 # ─────────────────────────────
 
-def obtener_imagen_feed(entry):
-    if "media_content" in entry:
-        return entry.media_content[0]["url"]
-    if "links" in entry:
-        for l in entry.links:
-            if "image" in l.type:
-                return l.href
-    return None
-
-def obtener_imagen_web(url):
+def obtener_imagen_articulo(url):
     try:
-        html = requests.get(url, timeout=10, headers={
-            "User-Agent": "Mozilla/5.0"
-        }).text
+        html = requests.get(url, headers=HEADERS, timeout=15).text
 
-        match = re.search(r'property="og:image"\s*content="([^"]+)"', html)
+        # og:image estándar
+        match = re.search(r'<meta property="og:image" content="([^"]+)"', html)
         if match:
             return match.group(1)
+
+        # twitter:image fallback
+        match = re.search(r'<meta name="twitter:image" content="([^"]+)"', html)
+        if match:
+            return match.group(1)
+
     except:
         pass
 
     return None
 
 # ─────────────────────────────
-# HISTORIAL ANTI DUPLICADOS
+# HISTORIAL
 # ─────────────────────────────
 
 def load_sent_links(source):
@@ -138,19 +138,18 @@ def send_message(chat_id, text):
     )
 
 # ─────────────────────────────
-# MAIN LOOP
+# MAIN
 # ─────────────────────────────
 
 for source, data in FEEDS.items():
-    print(f"Checking {source}...")
+    print("Checking", source)
     feed = feedparser.parse(data["url"])
     sent_links = load_sent_links(source)
 
     nuevos = []
 
     for entry in feed.entries:
-        link = extraer_url_real_google(entry)
-        link = limpiar_url_google(link)
+        link = limpiar_url(extraer_url_real_google(entry))
 
         if link in sent_links:
             continue
@@ -165,9 +164,7 @@ for source, data in FEEDS.items():
         titulo = limpiar_html(post.title)
         link = post.real_link
 
-        imagen = obtener_imagen_feed(post)
-        if not imagen:
-            imagen = obtener_imagen_web(link)
+        imagen = obtener_imagen_articulo(link)
 
         caption = f"""
 <b>{data['emoji']} {source.upper()}</b>
