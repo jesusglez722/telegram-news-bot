@@ -4,103 +4,66 @@ import os
 import re
 import json
 import html
+import hashlib
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FEEDS = {
     "ReutersBiz": {
         "url": "https://news.google.com/rss/search?q=site:reuters.com/business&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003749568108",
-        "emoji": "🟠"
+        "chat": "-1003749568108", "emoji": "🟠"
     },
     "ReutersChina": {
         "url": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003724765047",
-        "emoji": "🟠"
+        "chat": "-1003724765047", "emoji": "🟠"
     },
     "business": {
         "url": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003760302624",
-        "emoji": "🟡"
+        "chat": "-1003760302624", "emoji": "🟡"
     },
     "WSJ": {
         "url": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003861476711",
-        "emoji": "⚪"
+        "chat": "-1003861476711", "emoji": "⚪"
     },
     "FT": {
         "url": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003561464477",
-        "emoji": "🟤"
+        "chat": "-1003561464477", "emoji": "🟤"
     },
     "TheEconomist": {
         "url": "https://www.economist.com/latest/rss.xml",
-        "chat": "-1003897620126",
-        "emoji": "🔴"
+        "chat": "-1003897620126", "emoji": "🔴"
     }
 }
 
-MAX_HISTORY = 500  # Aumentado para mayor seguridad
+MAX_HISTORY = 500
 MAX_POSTS_PER_RUN = 5
-
-# ─────────────────────────────
-# LIMPIEZA Y EXTRACCIÓN
-# ─────────────────────────────
 
 def limpiar_html(texto):
     limpio = re.sub("<.*?>", "", texto)
-    # Google News suele añadir " - Nombre del Medio" al final del título
     limpio = re.sub(r" - [^-]+$", "", limpio)
     return limpio.strip()
 
-def limpiar_url_final(link):
-    # Limpieza agresiva de parámetros de rastreo
-    link = link.split("?")[0].split("#")[0]
-    return link.strip().lower()
-
 def extraer_url_real_google(entry):
-    # Google News a veces pone la URL real en el summary
     if "summary" in entry:
         match = re.search(r'href="(https?://[^"]+)"', entry.summary)
-        if match:
-            return match.group(1)
-    return entry.link
+        if match: return match.group(1).split('?')[0].split('#')[0].lower()
+    return entry.link.split('?')[0].lower()
 
-# ─────────────────────────────
-# IMÁGENES (ELIMINANDO LOGOS DE GOOGLE)
-# ─────────────────────────────
-
-def obtener_imagen_real(entry, url_real):
-    # 1. Ignoramos media_content porque suele ser el LOGO del medio en Google News
-    # Solo lo aceptamos si NO es de Google News (como The Economist)
-    if "news.google.com" not in entry.link:
-        if "media_content" in entry:
-            return entry.media_content[0]["url"]
-
-    # 2. Intentamos Scrapping de la web real (og:image)
-    # Usamos un User-Agent de navegador real para evitar bloqueos
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        res = requests.get(url_real, timeout=10, headers=headers)
-        # Buscamos og:image o twitter:image
-        match = re.search(r'property="og:image"\s+content="([^"]+)"', res.text)
-        if not match:
-            match = re.search(r'name="twitter:image"\s+content="([^"]+)"', res.text)
-        
-        if match:
-            img_url = match.group(1)
-            # Evitar capturar logos pequeños que a veces están en og:image
-            if "logo" not in img_url.lower():
+def obtener_imagen_robusta(entry, url_real):
+    # TRUCO: Google News oculta una miniatura en el 'summary'
+    if "summary" in entry:
+        img_match = re.search(r'<img src="([^"]+)"', entry.summary)
+        if img_match:
+            img_url = img_match.group(1)
+            # Evitamos el logo de Google News
+            if "lh3.googleusercontent.com" in img_url or "google" not in img_url.lower():
                 return img_url
-    except:
-        pass
-    return None
 
-# ─────────────────────────────
-# SISTEMA DE ARCHIVOS
-# ─────────────────────────────
+    # Fallback para The Economist o si el anterior falla
+    if "media_content" in entry:
+        return entry.media_content[0]["url"]
+    
+    return None
 
 def load_sent_links(source):
     file = f"sent_{source}.txt"
@@ -110,14 +73,9 @@ def load_sent_links(source):
 
 def save_sent_links(source, links_set):
     file = f"sent_{source}.txt"
-    # Guardamos solo los últimos MAX_HISTORY para no inflar el archivo
     links = list(links_set)[-MAX_HISTORY:]
     with open(file, "w", encoding="utf-8") as f:
         f.write("\n".join(links))
-
-# ─────────────────────────────
-# ENVIAR A TELEGRAM
-# ─────────────────────────────
 
 def send_to_telegram(chat_id, caption, image=None):
     if image:
@@ -127,42 +85,40 @@ def send_to_telegram(chat_id, caption, image=None):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {"chat_id": chat_id, "text": caption, "parse_mode": "HTML", "disable_web_page_preview": False}
     
-    requests.post(url, data=payload)
+    r = requests.post(url, data=payload)
+    print(f"Status Telegram: {r.status_code}")
 
-# ─────────────────────────────
-# MAIN
-# ─────────────────────────────
-
+# --- MAIN ---
 for source, data in FEEDS.items():
     print(f"Checking {source}...")
     feed = feedparser.parse(data["url"])
-    sent_links = load_sent_links(source)
+    sent_hashes = load_sent_links(source)
     nuevos = []
 
     for entry in feed.entries:
         url_real = extraer_url_real_google(entry)
-        url_limpia = limpiar_url_final(url_real)
+        titulo_limpio = limpiar_html(entry.title)
+        
+        # SOLUCIÓN WSJ: Usamos un hash del título + URL para evitar repetidos
+        # A veces cambian la URL pero el título es idéntico
+        post_id = hashlib.md_id = hashlib.md5(f"{titulo_limpio}{url_real}".encode()).hexdigest()
 
-        # Doble comprobación de duplicados (URL limpia y el ID de Google)
-        if url_limpia in sent_links:
+        if post_id in sent_hashes:
             continue
 
-        entry.final_link = url_limpia
+        entry.final_link = url_real
+        entry.post_id = post_id
         nuevos.append(entry)
-        sent_links.add(url_limpia)
+        sent_hashes.add(post_id)
 
-    # Solo procesamos los X más recientes
     nuevos = nuevos[:MAX_POSTS_PER_RUN]
 
     for post in reversed(nuevos):
         titulo = limpiar_html(post.title)
         link = post.final_link
-        
-        # Intentar obtener imagen de la web (evitando el logo de Google News)
-        imagen = obtener_imagen_real(post, link)
+        imagen = obtener_imagen_robusta(post, link)
 
         caption = f"<b>{data['emoji']} {source.upper()}</b>\n\n{titulo}\n\n<a href='{link}'>📰 Leer noticia</a>"
-
         send_to_telegram(data["chat"], caption, imagen)
 
-    save_sent_links(source, sent_links)
+    save_sent_links(source, sent_hashes)
