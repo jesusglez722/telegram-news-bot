@@ -1,90 +1,119 @@
 import feedparser
 import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse, parse_qs
-import time
+import os
+import re
 
-RSS_URL = "https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US&ceid=US:en"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-seen_links = set()
+ACCOUNTS = {
+    "ReutersBiz": "-1003749568108",
+    "ReuterChina": "-1003724765047",
+    "business": "-1003760302624",
+    "WSJ": "-1003861476711",
+    "FT": "-1003561464477",
+    "TheEconomist": "-1003897620126"
+}
 
-def get_real_article_url(google_link):
+# ─────────────────────────────
+
+def limpiar_texto_y_link(texto):
+    links = re.findall(r'https?://\S+', texto)
+    articulo = links[0] if links else ""
+    texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
+    return texto_limpio, articulo
+
+def get_tweet_id(link):
+    return link.split("/")[-1]
+
+# 🔥 obtener imagen del tweet desde vxtwitter
+def obtener_imagen_tweet(tweet_id):
     try:
-        parsed = urlparse(google_link)
-
-        if "news.google.com" not in parsed.netloc:
-            return google_link
-
-        query = parse_qs(parsed.query)
-        if "url" in query:
-            return query["url"][0]
-
-        return google_link
+        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
+        r = requests.get(url, timeout=10).json()
+        if "mediaURLs" in r and len(r["mediaURLs"]) > 0:
+            return r["mediaURLs"][0]
     except:
-        return google_link
-
-
-def scrape_article_image(url):
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-
-        r = requests.get(url, headers=headers, timeout=8)
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        og = soup.find("meta", property="og:image")
-        if og and og.get("content"):
-            return og["content"]
-
-        tw = soup.find("meta", property="twitter:image")
-        if tw and tw.get("content"):
-            return tw["content"]
-
-    except:
-        pass
-
+        return None
     return None
 
+# ─────────────────────────────
 
-def get_image_from_entry(entry):
-    if "media_content" in entry:
-        return entry.media_content[0]["url"]
+def get_last_link(account):
+    file = f"last_{account}.txt"
+    if not os.path.exists(file):
+        return ""
+    with open(file, "r") as f:
+        return f.read().strip()
 
-    if "media_thumbnail" in entry:
-        return entry.media_thumbnail[0]["url"]
+def save_last_link(account, link):
+    with open(f"last_{account}.txt", "w") as f:
+        f.write(link)
 
-    real_url = get_real_article_url(entry.link)
-    return scrape_article_image(real_url)
+# ─────────────────────────────
 
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    })
 
-def get_news():
-    feed = feedparser.parse(RSS_URL)
-    news_list = []
+def send_photo(chat_id, caption, photo):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "photo": photo,
+        "caption": caption,
+        "parse_mode": "HTML"
+    })
+
+EMOJIS = {
+    "ReutersBiz": "🟡",
+    "ReuterChina": "🐉",
+    "business": "💼",
+    "WSJ": "🔵",
+    "FT": "🟣",
+    "TheEconomist": "🔴"
+}
+
+# ─────────────────────────────
+
+for account, chat_id in ACCOUNTS.items():
+    feed = feedparser.parse(f"https://nitter.net/{account}/rss")
+
+    last_link = get_last_link(account)
+    new_posts = []
 
     for entry in feed.entries:
-        real_url = get_real_article_url(entry.link)
+        if entry.link == last_link:
+            break
+        new_posts.append(entry)
 
-        if real_url in seen_links:
-            continue
-        seen_links.add(real_url)
+    if new_posts:
+        new_posts.reverse()
 
-        image = get_image_from_entry(entry)
+        for post in new_posts:
+            texto, articulo = limpiar_texto_y_link(post.title)
+            tweet_id = get_tweet_id(post.link)
+            tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
+            emoji = EMOJIS.get(account, "📰")
 
-        news_list.append({
-            "title": entry.title,
-            "link": real_url,
-            "image": image
-        })
+            caption = f"""
+<b>{emoji} {account.upper()}</b>
 
-        time.sleep(1)  # evita bloqueos por scraping
+{texto}
 
-    return news_list
+<a href="{tweet_fx}">🐦 Ver tweet</a>
+<a href="{articulo}">📰 Leer artículo</a>
+"""
 
+            imagen = obtener_imagen_tweet(tweet_id)
 
-if __name__ == "__main__":
-    news = get_news()
+            if imagen:
+                send_photo(chat_id, caption, imagen)
+            else:
+                send_message(chat_id, caption)
 
-    for n in news[:5]:
-        print("📰", n["title"])
-        print("🔗", n["link"])
-        print("🖼️", n["image"])
-        print("-----")
+        save_last_link(account, new_posts[-1].link)
