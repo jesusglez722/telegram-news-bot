@@ -1,182 +1,109 @@
 import feedparser
 import requests
-import os
-import re
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse, parse_qs
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# RSS Google News búsqueda
+RSS_URL = "https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US&ceid=US:en"
 
-FEEDS = {
-    "ReutersBiz": {
-        "url": "https://news.google.com/rss/search?q=site:reuters.com/business&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003749568108",
-        "emoji": "🟠"
-    },
-    "ReutersChina": {
-        "url": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003724765047",
-        "emoji": "🟠"
-    },
-    "business": {
-        "url": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003760302624",
-        "emoji": "🟡"
-    },
-    "WSJ": {
-        "url": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003861476711",
-        "emoji": "⚪"
-    },
-    "FT": {
-        "url": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
-        "chat": "-1003561464477",
-        "emoji": "🟤"
-    },
-    "TheEconomist": {
-        "url": "https://www.economist.com/latest/rss.xml",
-        "chat": "-1003897620126",
-        "emoji": "🔴"
-    }
-}
+# Para evitar duplicados
+seen_links = set()
 
-MAX_HISTORY = 300
-MAX_POSTS_PER_RUN = 5
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9"
-}
-
-# ─────────────────────────────
-# LIMPIEZA
-# ─────────────────────────────
-
-def limpiar_html(texto):
-    return re.sub("<.*?>", "", texto).strip()
-
-def limpiar_url(link):
-    return link.split("?")[0]
-
-# ─────────────────────────────
-# URL REAL GOOGLE NEWS
-# ─────────────────────────────
-
-def extraer_url_real_google(entry):
-    if "news.google.com" not in entry.link:
-        return entry.link
-
-    if "summary" in entry:
-        match = re.search(r'href="(https?://[^"]+)"', entry.summary)
-        if match:
-            return match.group(1)
-
-    return entry.link
-
-# ─────────────────────────────
-# EXTRAER IMAGEN REAL DEL ARTÍCULO
-# ─────────────────────────────
-
-def obtener_imagen_articulo(url):
+def get_real_article_url(google_link):
+    """
+    Extrae la URL real del artículo desde el redirect de Google News
+    """
     try:
-        html = requests.get(url, headers=HEADERS, timeout=15).text
+        parsed = urlparse(google_link)
+        if "news.google.com" in parsed.netloc:
+            return google_link  # algunos ya vienen limpios
 
-        # og:image estándar
-        match = re.search(r'<meta property="og:image" content="([^"]+)"', html)
-        if match:
-            return match.group(1)
+        # Google usa parámetro url= o ?u=
+        query = parse_qs(parsed.query)
+        if "url" in query:
+            return query["url"][0]
 
-        # twitter:image fallback
-        match = re.search(r'<meta name="twitter:image" content="([^"]+)"', html)
-        if match:
-            return match.group(1)
+        return google_link
+    except:
+        return google_link
+
+
+def scrape_article_image(url):
+    """
+    Entra al artículo y busca la imagen og:image (la real)
+    """
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        r = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        og = soup.find("meta", property="og:image")
+        if og and og.get("content"):
+            return og["content"]
+
+        # fallback twitter:image
+        tw = soup.find("meta", property="twitter:image")
+        if tw and tw.get("content"):
+            return tw["content"]
 
     except:
         pass
 
     return None
 
-# ─────────────────────────────
-# HISTORIAL
-# ─────────────────────────────
 
-def load_sent_links(source):
-    file = f"sent_{source}.txt"
-    if not os.path.exists(file):
-        return set()
-    with open(file, "r", encoding="utf-8") as f:
-        return set(line.strip() for line in f.readlines())
+def get_image_from_entry(entry):
+    """
+    Primero intenta RSS → si no existe → scraping real
+    """
 
-def save_sent_links(source, links_set):
-    file = f"sent_{source}.txt"
-    links = list(links_set)[-MAX_HISTORY:]
-    with open(file, "w", encoding="utf-8") as f:
-        f.write("\n".join(links))
+    # 1️⃣ intentar RSS
+    if "media_content" in entry:
+        return entry.media_content[0]["url"]
 
-# ─────────────────────────────
-# TELEGRAM
-# ─────────────────────────────
+    if "media_thumbnail" in entry:
+        return entry.media_thumbnail[0]["url"]
 
-def send_photo(chat_id, caption, photo):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-        data={
-            "chat_id": chat_id,
-            "photo": photo,
-            "caption": caption,
-            "parse_mode": "HTML"
-        }
-    )
+    # 2️⃣ scraping del artículo (la clave del fix)
+    real_url = get_real_article_url(entry.link)
+    img = scrape_article_image(real_url)
 
-def send_message(chat_id, text):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": False
-        }
-    )
+    return img
 
-# ─────────────────────────────
-# MAIN
-# ─────────────────────────────
 
-for source, data in FEEDS.items():
-    print("Checking", source)
-    feed = feedparser.parse(data["url"])
-    sent_links = load_sent_links(source)
-
-    nuevos = []
+def get_news():
+    feed = feedparser.parse(RSS_URL)
+    news_list = []
 
     for entry in feed.entries:
-        link = limpiar_url(extraer_url_real_google(entry))
 
-        if link in sent_links:
+        real_url = get_real_article_url(entry.link)
+
+        # 🚫 eliminar duplicados (WSJ etc)
+        if real_url in seen_links:
             continue
+        seen_links.add(real_url)
 
-        entry.real_link = link
-        nuevos.append(entry)
-        sent_links.add(link)
+        image = get_image_from_entry(entry)
 
-    nuevos = nuevos[:MAX_POSTS_PER_RUN]
+        news_list.append({
+            "title": entry.title,
+            "link": real_url,
+            "image": image
+        })
 
-    for post in reversed(nuevos):
-        titulo = limpiar_html(post.title)
-        link = post.real_link
+    return news_list
 
-        imagen = obtener_imagen_articulo(link)
 
-        caption = f"""
-<b>{data['emoji']} {source.upper()}</b>
+# --- PROBAR ---
+news = get_news()
 
-{titulo}
-
-<a href="{link}">📰 Leer noticia</a>
-"""
-
-        if imagen:
-            send_photo(data["chat"], caption, imagen)
-        else:
-            send_message(data["chat"], caption)
-
-    save_sent_links(source, sent_links)
+for n in news[:10]:
+    print("📰", n["title"])
+    print("🔗", n["link"])
+    print("🖼️", n["image"])
+    print("----")
