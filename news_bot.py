@@ -26,10 +26,7 @@ CHATS = {
     "TheEconomist": "-1003897620126"
 }
 
-# User-Agent de navegador real para saltar bloqueos de Bloomberg/Reuters
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-}
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'}
 
 def extraer_url_real(entry):
     if "news.google.com" in entry.link and "summary" in entry:
@@ -37,50 +34,47 @@ def extraer_url_real(entry):
         if match: return match.group(1).split('?')[0]
     return entry.link.split('?')[0]
 
-def obtener_imagen_real(url_real, entry):
-    """Extrae la imagen original de la web o del feed si es The Economist"""
+def obtener_imagen(url_real, entry):
+    """Busca la foto original usando un puente para evitar el bloqueo de Bloomberg/Reuters"""
     if "economist.com" in url_real:
         if "media_content" in entry: return entry.media_content[0]["url"]
         return None
     
     try:
-        # Entramos en la web para buscar la etiqueta og:image
+        # Intentamos obtener el HTML de la noticia
         r = requests.get(url_real, headers=HEADERS, timeout=10)
-        match = re.search(r'property="og:image"\s+content="([^"]+)"', r.text)
-        if not match:
-            match = re.search(r'content="([^"]+)"\s+property="og:image"', r.text)
+        m = re.search(r'property="og:image" content="([^"]+)"', r.text)
+        if not m: m = re.search(r'content="([^"]+)" property="og:image"', r.text)
         
-        if match:
-            img_url = match.group(1)
-            if "google" in img_url: return None # Ignorar logos de Google
+        if m:
+            img_url = m.group(1)
+            # Si es una imagen de Google, la ignoramos para no mandar el logo
+            if "google" in img_url: return None
             return img_url
     except:
         pass
     return None
 
 def enviar_telegram(chat_id, texto, img_url):
-    """Descarga la imagen y la sube físicamente a Telegram"""
+    """Descarga la imagen a través de un puente (wsrv.nl) y la sube a Telegram"""
     if img_url:
         try:
-            # EL BOT DESCARGA LA IMAGEN
-            resp = requests.get(img_url, headers=HEADERS, timeout=15)
-            if resp.status_code == 200:
-                # LA SUBE COMO ARCHIVO (Multipart/form-data)
-                img_data = BytesIO(resp.content)
-                img_data.name = 'photo.jpg'
-                
-                requests.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                    data={"chat_id": chat_id, "caption": texto, "parse_mode": "HTML"},
-                    files={"photo": img_data}
-                )
-                return
-        except Exception as e:
-            print(f"Error subiendo imagen: {e}")
+            # USAMOS UN PUENTE (wsrv.nl) para que Bloomberg no bloquee la descarga del bot
+            puente_url = f"https://wsrv.nl/?url={img_url}"
+            img_data = requests.get(puente_url, timeout=15).content
+            img_file = BytesIO(img_data)
+            img_file.name = 'news.jpg'
+            
+            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
+                data={"chat_id": chat_id, "caption": texto, "parse_mode": "HTML"},
+                files={"photo": img_file}
+            )
+            return
+        except:
+            pass
 
-    # Si falla la imagen, envía solo texto para no perder la noticia
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+    # Si falla la foto, mandamos el texto con la previsualización de enlace normal
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
         data={"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": False}
     )
 
@@ -101,13 +95,11 @@ for source, feed_url in FEEDS.items():
     if nuevos:
         nuevos.reverse()
         for entry, url in nuevos[:3]:
-            # Título limpio (sin nombre de medio al final)
             titulo = re.sub(r" - [^-]+$", "", entry.title).strip()
+            # DISEÑO: Sin negritas de cuenta y link acortado en el texto
+            mensaje = f"{html.escape(titulo)}\n\n<a href='{url}'>Ver artículo completo</a>"
             
-            # Texto final: Sin negritas de cuenta, link acortado al final
-            mensaje = f"<b>{html.escape(titulo)}</b>\n\n<a href='{url}'>Ver artículo completo</a>"
-            
-            img = obtener_imagen_real(url, entry)
+            img = obtener_imagen(url, entry)
             enviar_telegram(CHATS[source], mensaje, img)
             sent_links.add(url)
             
