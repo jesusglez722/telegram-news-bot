@@ -8,104 +8,110 @@ from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Configuración completa de tus 6 canales
 FEEDS = {
-    "ReutersBiz": {
-        "url": "https://rsshub.app/reuters/business",
-        "chat": "-1003749568108"
-    },
-    "ReutersChina": {
-        "url": "https://rsshub.app/reuters/world/china",
-        "chat": "-1003724765047"
-    },
-    "Bloomberg": {
-        "url": "https://rsshub.app/bloomberg/economics",
-        "chat": "-1003760302624"
-    },
-    "WSJ": {
-        "url": "https://rsshub.app/wsj/en-us/business",
-        "chat": "-1003861476711"
-    },
-    "FT": {
-        "url": "https://rsshub.app/ft/home",
-        "chat": "-1003561464477"
-    },
-    "TheEconomist": {
-        "url": "https://www.economist.com/latest/rss.xml",
-        "chat": "-1003897620126"
-    }
+    "ReutersBiz": "https://news.google.com/rss/search?q=site:reuters.com/business&hl=en-US&gl=US&ceid=US:en",
+    "ReutersChina": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
+    "business": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
+    "WSJ": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
+    "FT": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
+    "TheEconomist": "https://www.economist.com/latest/rss.xml"
 }
 
-def get_last_link(source):
-    file = f"sent_{source}.txt"
-    if not os.path.exists(file): return set()
-    with open(file, "r") as f: return set(line.strip() for line in f.readlines())
+# IDs de los canales
+CHATS = {
+    "ReutersBiz": "-1003749568108",
+    "ReutersChina": "-1003724765047",
+    "business": "-1003760302624",
+    "WSJ": "-1003861476711",
+    "FT": "-1003561464477",
+    "TheEconomist": "-1003897620126"
+}
 
-def save_sent_links(source, links):
-    with open(f"sent_{source}.txt", "w") as f:
-        f.write("\n".join(list(links)[-100:]))
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-def extraer_imagen(entry):
-    """Busca la imagen en enclosures o dentro del HTML de la descripción"""
-    # 1. Enclosure (Standard RSS como The Economist)
-    if 'enclosures' in entry and entry.enclosures:
-        return entry.enclosures[0].get('url')
-    # 2. Etiqueta <img> en la descripción (Standard RSSHub)
-    if 'description' in entry:
-        img = re.search(r'<img [^>]*src="([^"]+)"', entry.description)
-        if img: return img.group(1)
+def limpiar_titulo(titulo):
+    # Quita el nombre del medio al final (ej: " - Reuters")
+    limpio = re.sub(r" - [^-]+$", "", titulo).strip()
+    return html.escape(limpio)
+
+def extraer_url_real(entry):
+    # Si es de Google News, buscamos el link real en el summary
+    if "news.google.com" in entry.link and "summary" in entry:
+        match = re.search(r'href="(https?://[^"]+)"', entry.summary)
+        if match: return match.group(1).split('?')[0]
+    return entry.link.split('?')[0]
+
+def obtener_imagen(entry, url_real):
+    # 1. Caso especial The Economist (vía RSS)
+    if "economist.com" in url_real and "media_content" in entry:
+        return entry.media_content[0]["url"]
+    
+    # 2. Resto de medios: Scrapeamos la etiqueta og:image de la web real
+    try:
+        r = requests.get(url_real, headers=HEADERS, timeout=10)
+        match = re.search(r'property="og:image"\s+content="([^"]+)"', r.text)
+        if not match:
+            match = re.search(r'content="([^"]+)"\s+property="og:image"', r.text)
+        if match: return match.group(1)
+    except:
+        pass
     return None
 
-def enviar_a_telegram(chat_id, titulo, link, img_url):
-    """Descarga la imagen y la sube a Telegram para evitar bloqueos de URL"""
+def enviar_telegram(chat_id, texto, link, img_url):
     markup = {"inline_keyboard": [[{"text": "Leer noticia completa ↗️", "url": link}]]}
     
     if img_url:
         try:
-            # Bajamos la imagen a la memoria del bot
-            resp = requests.get(img_url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if resp.status_code == 200:
-                bio = BytesIO(resp.content)
-                bio.name = 'post.jpg'
-                
-                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
-                    data={
-                        "chat_id": chat_id,
-                        "caption": titulo,
-                        "reply_markup": json.dumps(markup),
-                        "parse_mode": "HTML"
-                    },
-                    files={"photo": bio}
-                )
-                return
-        except Exception as e:
-            print(f"Error con imagen: {e}")
+            # Descarga de imagen para evitar bloqueos de Telegram
+            img_data = requests.get(img_url, headers=HEADERS, timeout=15).content
+            bio = BytesIO(img_data)
+            bio.name = 'foto.jpg'
+            
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+            requests.post(url, data={
+                "chat_id": chat_id,
+                "caption": texto,
+                "reply_markup": json.dumps(markup),
+                "parse_mode": "HTML"
+            }, files={"photo": bio})
+            return
+        except:
+            pass
 
-    # Fallback: Solo mensaje de texto si no hay imagen o falla la subida
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={
+    # Si falla la imagen, mandamos texto
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={
         "chat_id": chat_id,
-        "text": titulo,
+        "text": texto,
         "reply_markup": json.dumps(markup),
         "parse_mode": "HTML"
     })
 
-# --- PROCESO PRINCIPAL ---
-for source, data in FEEDS.items():
+# --- PROCESO ---
+for source, feed_url in FEEDS.items():
     print(f"Procesando {source}...")
-    feed = feedparser.parse(data["url"])
-    sent_links = get_last_link(source)
+    feed = feedparser.parse(feed_url)
     
-    # Procesamos solo los 5 más recientes para evitar saturar
-    for post in reversed(feed.entries[:5]):
-        link = post.link.split('?')[0]
-        if link in sent_links: continue
+    # Cargamos historial
+    file_hist = f"sent_{source}.txt"
+    sent_links = set()
+    if os.path.exists(file_hist):
+        with open(file_hist, "r") as f: sent_links = set(line.strip() for line in f.readlines())
 
-        # Limpieza: quitamos el " - Reuters" del final y escapamos HTML
-        titulo = html.escape(re.sub(r" - [^-]+$", "", post.title).strip())
-        
-        imagen = extraer_imagen(post)
-        enviar_a_telegram(data["chat"], titulo, link, imagen)
-        
-        sent_links.add(link)
-    
-    save_sent_links(source, sent_links)
+    nuevos = []
+    for entry in feed.entries[:10]:
+        url_real = extraer_url_real(entry)
+        if url_real not in sent_links:
+            nuevos.append((entry, url_real))
+
+    if nuevos:
+        nuevos.reverse()
+        for entry, url in nuevos:
+            titulo = limpiar_titulo(entry.title)
+            imagen = obtener_imagen(entry, url)
+            enviar_telegram(CHATS[source], titulo, url, imagen)
+            sent_links.add(url)
+            
+        # Guardamos historial (limitado a 100)
+        with open(file_hist, "w") as f:
+            f.write("\n".join(list(sent_links)[-100:]))
