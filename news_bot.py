@@ -6,7 +6,6 @@ import json
 import html
 from io import BytesIO
 
-# Configuración
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FEEDS = {
@@ -27,8 +26,10 @@ CHATS = {
     "TheEconomist": "-1003897620126"
 }
 
-# User-Agent para que los medios no nos bloqueen al pedir la foto
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'}
+# User-Agent de navegador real para saltar bloqueos de Bloomberg/Reuters
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+}
 
 def extraer_url_real(entry):
     if "news.google.com" in entry.link and "summary" in entry:
@@ -36,51 +37,50 @@ def extraer_url_real(entry):
         if match: return match.group(1).split('?')[0]
     return entry.link.split('?')[0]
 
-def obtener_url_imagen(entry, url_real):
-    """Busca la URL de la foto real del artículo"""
-    # Para The Economist, la sacamos del feed
+def obtener_imagen_real(url_real, entry):
+    """Extrae la imagen original de la web o del feed si es The Economist"""
     if "economist.com" in url_real:
         if "media_content" in entry: return entry.media_content[0]["url"]
-        if "description" in entry:
-            m = re.search(r'<img [^>]*src="([^"]+)"', entry.description)
-            if m: return m.group(1)
+        return None
     
-    # Para el resto, entramos en la web para buscar la imagen de portada
     try:
+        # Entramos en la web para buscar la etiqueta og:image
         r = requests.get(url_real, headers=HEADERS, timeout=10)
-        # Buscamos la etiqueta og:image (la foto oficial de la noticia)
-        m = re.search(r'property="og:image" content="([^"]+)"', r.text)
-        if not m: m = re.search(r'content="([^"]+)" property="og:image"', r.text)
+        match = re.search(r'property="og:image"\s+content="([^"]+)"', r.text)
+        if not match:
+            match = re.search(r'content="([^"]+)"\s+property="og:image"', r.text)
         
-        if m:
-            img_url = m.group(1)
-            # Si el link es del logo de Google News, lo ignoramos
-            if "googleusercontent.com" in img_url or "google.com" in img_url: return None
+        if match:
+            img_url = match.group(1)
+            if "google" in img_url: return None # Ignorar logos de Google
             return img_url
     except:
         pass
     return None
 
 def enviar_telegram(chat_id, texto, img_url):
-    """Envía la noticia descargando la imagen para evitar bloqueos"""
-    
+    """Descarga la imagen y la sube físicamente a Telegram"""
     if img_url:
         try:
-            # EL TRUCO: El bot descarga la foto y se la 'sube' a Telegram
-            img_data = requests.get(img_url, headers=HEADERS, timeout=15).content
-            img_file = BytesIO(img_data)
-            img_file.name = 'noticia.jpg'
-            
-            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
-                data={"chat_id": chat_id, "caption": texto, "parse_mode": "HTML"},
-                files={"photo": img_file}
-            )
-            return
-        except:
-            pass
+            # EL BOT DESCARGA LA IMAGEN
+            resp = requests.get(img_url, headers=HEADERS, timeout=15)
+            if resp.status_code == 200:
+                # LA SUBE COMO ARCHIVO (Multipart/form-data)
+                img_data = BytesIO(resp.content)
+                img_data.name = 'photo.jpg'
+                
+                requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                    data={"chat_id": chat_id, "caption": texto, "parse_mode": "HTML"},
+                    files={"photo": img_data}
+                )
+                return
+        except Exception as e:
+            print(f"Error subiendo imagen: {e}")
 
-    # Si no hay imagen o falla la subida, solo texto
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+    # Si falla la imagen, envía solo texto para no perder la noticia
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": False}
     )
 
@@ -101,12 +101,13 @@ for source, feed_url in FEEDS.items():
     if nuevos:
         nuevos.reverse()
         for entry, url in nuevos[:3]:
-            # Título limpio sin el nombre del medio
+            # Título limpio (sin nombre de medio al final)
             titulo = re.sub(r" - [^-]+$", "", entry.title).strip()
-            # Mensaje con link acortado (hipervínculo)
-            mensaje = f"{html.escape(titulo)}\n\n<a href='{url}'>Ver artículo completo</a>"
             
-            img = obtener_url_imagen(entry, url)
+            # Texto final: Sin negritas de cuenta, link acortado al final
+            mensaje = f"<b>{html.escape(titulo)}</b>\n\n<a href='{url}'>Ver artículo completo</a>"
+            
+            img = obtener_imagen_real(url, entry)
             enviar_telegram(CHATS[source], mensaje, img)
             sent_links.add(url)
             
