@@ -2,106 +2,184 @@ import feedparser
 import requests
 import os
 import re
-import json
-import html
-from io import BytesIO
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 FEEDS = {
-    "ReutersBiz": "https://news.google.com/rss/search?q=when:24h+allinurl:reuters.com&ceid=US:en&hl=en-US&gl=US",
-    "ReutersChina": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
-    "business": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
-    "WSJ": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
-    "FT": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
-    "TheEconomist": "https://www.economist.com/latest/rss.xml"
+    "ReutersBiz": {
+        "url": "https://news.google.com/rss/search?q=site:reuters.com/business&hl=en-US&gl=US&ceid=US:en",
+        "chat": "-1003749568108",
+        "emoji": "🟠"
+    },
+    "ReutersChina": {
+        "url": "https://news.google.com/rss/search?q=site:reuters.com/world/china&hl=en-US&gl=US&ceid=US:en",
+        "chat": "-1003724765047",
+        "emoji": "🟠"
+    },
+    "business": {
+        "url": "https://news.google.com/rss/search?q=site:bloomberg.com&hl=en-US&gl=US&ceid=US:en",
+        "chat": "-1003760302624",
+        "emoji": "🟡"
+    },
+    "WSJ": {
+        "url": "https://news.google.com/rss/search?q=site:wsj.com&hl=en-US&gl=US&ceid=US:en",
+        "chat": "-1003861476711",
+        "emoji": "⚪"
+    },
+    "FT": {
+        "url": "https://news.google.com/rss/search?q=site:ft.com&hl=en-US&gl=US&ceid=US:en",
+        "chat": "-1003561464477",
+        "emoji": "🟤"
+    },
+    "TheEconomist": {
+        "url": "https://www.economist.com/latest/rss.xml",
+        "chat": "-1003897620126",
+        "emoji": "🔴"
+    }
 }
 
-CHATS = {
-    "ReutersBiz": "-1003749568108",
-    "ReutersChina": "-1003724765047",
-    "business": "-1003760302624",
-    "WSJ": "-1003861476711",
-    "FT": "-1003561464477",
-    "TheEconomist": "-1003897620126"
-}
+MAX_HISTORY = 300
+MAX_POSTS_PER_RUN = 5
 
-HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'}
+# ─────────────────────────────
+# LIMPIEZA TEXTO / URL
+# ─────────────────────────────
 
-def extraer_url_real(entry):
-    if "news.google.com" in entry.link and "summary" in entry:
-        match = re.search(r'href="(https?://[^"]+)"', entry.summary)
-        if match: return match.group(1).split('?')[0]
-    return entry.link.split('?')[0]
+def limpiar_html(texto):
+    limpio = re.sub("<.*?>", "", texto)
+    return limpio.strip()
 
-def obtener_imagen(url_real, entry):
-    """Busca la foto original usando un puente para evitar el bloqueo de Bloomberg/Reuters"""
-    if "economist.com" in url_real:
-        if "media_content" in entry: return entry.media_content[0]["url"]
-        return None
+def limpiar_url_google(link):
+    return link.split("?")[0]
+
+# ─────────────────────────────
+# EXTRAER URL REAL GOOGLE NEWS
+# ─────────────────────────────
+
+def extraer_url_real_google(entry):
+    if "news.google.com" not in entry.link:
+        return entry.link
     
-    try:
-        # Intentamos obtener el HTML de la noticia
-        r = requests.get(url_real, headers=HEADERS, timeout=10)
-        m = re.search(r'property="og:image" content="([^"]+)"', r.text)
-        if not m: m = re.search(r'content="([^"]+)" property="og:image"', r.text)
-        
-        if m:
-            img_url = m.group(1)
-            # Si es una imagen de Google, la ignoramos para no mandar el logo
-            if "google" in img_url: return None
-            return img_url
-    except:
-        pass
+    if "summary" in entry:
+        match = re.search(r'href="(https?://[^"]+)"', entry.summary)
+        if match:
+            return match.group(1)
+    
+    return entry.link
+
+# ─────────────────────────────
+# IMÁGENES
+# ─────────────────────────────
+
+def obtener_imagen_feed(entry):
+    if "media_content" in entry:
+        return entry.media_content[0]["url"]
+    if "links" in entry:
+        for l in entry.links:
+            if "image" in l.type:
+                return l.href
     return None
 
-def enviar_telegram(chat_id, texto, img_url):
-    """Descarga la imagen a través de un puente (wsrv.nl) y la sube a Telegram"""
-    if img_url:
-        try:
-            # USAMOS UN PUENTE (wsrv.nl) para que Bloomberg no bloquee la descarga del bot
-            puente_url = f"https://wsrv.nl/?url={img_url}"
-            img_data = requests.get(puente_url, timeout=15).content
-            img_file = BytesIO(img_data)
-            img_file.name = 'news.jpg'
-            
-            requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", 
-                data={"chat_id": chat_id, "caption": texto, "parse_mode": "HTML"},
-                files={"photo": img_file}
-            )
-            return
-        except:
-            pass
+def obtener_imagen_web(url):
+    try:
+        html = requests.get(url, timeout=10, headers={
+            "User-Agent": "Mozilla/5.0"
+        }).text
 
-    # Si falla la foto, mandamos el texto con la previsualización de enlace normal
-    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-        data={"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": False}
+        match = re.search(r'property="og:image"\s*content="([^"]+)"', html)
+        if match:
+            return match.group(1)
+    except:
+        pass
+
+    return None
+
+# ─────────────────────────────
+# HISTORIAL ANTI DUPLICADOS
+# ─────────────────────────────
+
+def load_sent_links(source):
+    file = f"sent_{source}.txt"
+    if not os.path.exists(file):
+        return set()
+    with open(file, "r", encoding="utf-8") as f:
+        return set(line.strip() for line in f.readlines())
+
+def save_sent_links(source, links_set):
+    file = f"sent_{source}.txt"
+    links = list(links_set)[-MAX_HISTORY:]
+    with open(file, "w", encoding="utf-8") as f:
+        f.write("\n".join(links))
+
+# ─────────────────────────────
+# TELEGRAM
+# ─────────────────────────────
+
+def send_photo(chat_id, caption, photo):
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+        data={
+            "chat_id": chat_id,
+            "photo": photo,
+            "caption": caption,
+            "parse_mode": "HTML"
+        }
     )
 
-# --- PROCESO ---
-for source, feed_url in FEEDS.items():
-    feed = feedparser.parse(feed_url)
-    file_hist = f"sent_{source}.txt"
-    sent_links = set()
-    if os.path.exists(file_hist):
-        with open(file_hist, "r") as f: sent_links = set(line.strip() for line in f.readlines())
+def send_message(chat_id, text):
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": False
+        }
+    )
+
+# ─────────────────────────────
+# MAIN LOOP
+# ─────────────────────────────
+
+for source, data in FEEDS.items():
+    print(f"Checking {source}...")
+    feed = feedparser.parse(data["url"])
+    sent_links = load_sent_links(source)
 
     nuevos = []
-    for entry in feed.entries[:10]:
-        url = extraer_url_real(entry).lower()
-        if url not in sent_links:
-            nuevos.append((entry, url))
 
-    if nuevos:
-        nuevos.reverse()
-        for entry, url in nuevos[:3]:
-            titulo = re.sub(r" - [^-]+$", "", entry.title).strip()
-            # DISEÑO: Sin negritas de cuenta y link acortado en el texto
-            mensaje = f"{html.escape(titulo)}\n\n<a href='{url}'>Ver artículo completo</a>"
-            
-            img = obtener_imagen(url, entry)
-            enviar_telegram(CHATS[source], mensaje, img)
-            sent_links.add(url)
-            
-        with open(file_hist, "w") as f:
-            f.write("\n".join(list(sent_links)[-200:]))
+    for entry in feed.entries:
+        link = extraer_url_real_google(entry)
+        link = limpiar_url_google(link)
+
+        if link in sent_links:
+            continue
+
+        entry.real_link = link
+        nuevos.append(entry)
+        sent_links.add(link)
+
+    nuevos = nuevos[:MAX_POSTS_PER_RUN]
+
+    for post in reversed(nuevos):
+        titulo = limpiar_html(post.title)
+        link = post.real_link
+
+        imagen = obtener_imagen_feed(post)
+        if not imagen:
+            imagen = obtener_imagen_web(link)
+
+        caption = f"""
+<b>{data['emoji']} {source.upper()}</b>
+
+{titulo}
+
+<a href="{link}">📰 Leer noticia</a>
+"""
+
+        if imagen:
+            send_photo(data["chat"], caption, imagen)
+        else:
+            send_message(data["chat"], caption)
+
+    save_sent_links(source, sent_links)
