@@ -8,12 +8,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 ACCOUNTS = {
     "ReutersBiz": "-1003749568108",
-    "ReutersChina": "-1003724765047",
+    "ReuterChina": "-1003724765047",
     "business": "-1003760302624",
     "WSJ": "-1003861476711",
     "FT": "-1003561464477",
     "TheEconomist": "-1003897620126",
-    "aleabitoreddit": "-1003627209266"
+    "aleabitoreddit": "-1003627209266"   # 🆕 NUEVA CUENTA
 }
 
 # ─────────────────────────────
@@ -52,15 +52,22 @@ def save_last_link(account, link):
         f.write(link)
 
 # ─────────────────────────────
-# 🔘 BOTONES TELEGRAM
+# 🔘 BOTONES TELEGRAM (con artículo opcional)
 
 def crear_botones(tweet_url, articulo_url):
-    keyboard = {
-        "inline_keyboard": [[
-            {"text": "🐦 Ver tweet", "url": tweet_url},
-            {"text": "📰 Leer artículo", "url": articulo_url}
-        ]]
-    }
+    if articulo_url:
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "🐦 Ver tweet", "url": tweet_url},
+                {"text": "📰 Leer artículo", "url": articulo_url}
+            ]]
+        }
+    else:
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "🐦 Ver tweet", "url": tweet_url}
+            ]]
+        }
     return json.dumps(keyboard)
 
 def send_message(chat_id, text, reply_markup=None):
@@ -105,9 +112,7 @@ for account, chat_id in ACCOUNTS.items():
             tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
 
             botones = crear_botones(tweet_fx, articulo)
-
-            # 🧼 SOLO titular ahora
-            caption = f"{texto}"
+            caption = texto
 
             imagen = obtener_imagen_tweet(tweet_id)
 
