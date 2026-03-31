@@ -8,11 +8,12 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 ACCOUNTS = {
     "ReutersBiz": "-1003749568108",
-    "ReuterChina": "-1003724765047",
+    "ReutersChina": "-1003724765047",
     "business": "-1003760302624",
     "WSJ": "-1003861476711",
     "FT": "-1003561464477",
-    "TheEconomist": "-1003897620126"
+    "TheEconomist": "-1003897620126",
+    "aleabitoreddit": "-1003627209266"
 }
 
 # ─────────────────────────────
