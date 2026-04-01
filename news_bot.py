@@ -17,6 +17,14 @@ ACCOUNTS = {
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
+# 🔥 Varias instancias Nitter (fallback automático)
+NITTERS = [
+    "https://nitter.net",
+    "https://nitter.poast.org",
+    "https://nitter.privacydev.net",
+    "https://nitter.projectsegfau.lt"
+]
+
 # ─────────────────────────────
 def get_last_id(account):
     file = f"last_{account}.txt"
@@ -86,14 +94,37 @@ def limpiar_texto(texto):
     return texto,articulo
 
 # ─────────────────────────────
+# 🔥 OBTENER TWEETS CON FALLBACK
 def obtener_tweets(account):
-    url=f"https://nitter.net/{account}/tweets?json=true"
-    return requests.get(url,headers=HEADERS,timeout=20).json()["tweets"]
+
+    for instance in NITTERS:
+        try:
+            url=f"{instance}/{account}/tweets?json=true"
+            r=requests.get(url,headers=HEADERS,timeout=20)
+
+            if r.status_code != 200:
+                continue
+
+            data=r.json()
+
+            if "tweets" in data:
+                print(f"OK usando {instance}")
+                return data["tweets"]
+
+        except:
+            print(f"Fallo instancia {instance}")
+            continue
+
+    print("⚠️ Todas las instancias Nitter fallaron")
+    return []
 
 # ─────────────────────────────
 for account,chat_id in ACCOUNTS.items():
 
     tweets=obtener_tweets(account)
+    if not tweets:
+        continue
+
     last_id=get_last_id(account)
     nuevos=[]
 
@@ -112,17 +143,19 @@ for account,chat_id in ACCOUNTS.items():
         tweet_url=f"https://fxtwitter.com/{account}/status/{t['id']}"
         botones=crear_botones(tweet_url,articulo)
 
-        # VIDEO
-        if t["videos"]:
-            video_url=t["videos"][0]["url"]
-            video_file=descargar_video(video_url)
-            send_video(chat_id,texto,video_file,botones)
+        try:
+            if t["videos"]:
+                video_url=t["videos"][0]["url"]
+                video_file=descargar_video(video_url)
+                send_video(chat_id,texto,video_file,botones)
 
-        # FOTO
-        elif t["pictures"]:
-            send_photo(chat_id,texto,t["pictures"][0],botones)
+            elif t["pictures"]:
+                send_photo(chat_id,texto,t["pictures"][0],botones)
 
-        else:
-            send_message(chat_id,texto,botones)
+            else:
+                send_message(chat_id,texto,botones)
+
+        except Exception as e:
+            print("Error enviando tweet:", e)
 
     save_last_id(account,nuevos[-1]["id"])
