@@ -19,8 +19,6 @@ ACCOUNTS = {
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # ─────────────────────────────
-# LIMPIAR TEXTO + EXTRAER LINK
-# ─────────────────────────────
 def limpiar_texto_y_link(texto):
     links = re.findall(r'https?://\S+', texto)
     articulo = links[0] if links else ""
@@ -31,42 +29,44 @@ def get_tweet_id(link):
     return link.split("/")[-1]
 
 # ─────────────────────────────
-# EXTRAER MEDIA REAL DEL TWEET (VIDEO O IMAGEN)
+# EXTRAER MEDIA (VIDEO / FOTO)
 # ─────────────────────────────
 def obtener_media_tweet(tweet_id):
     try:
         url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}?full=true"
-        r = requests.get(url, headers=HEADERS, timeout=20)
+        r = requests.get(url, headers=HEADERS, timeout=20).json()
 
-        if r.status_code != 200:
-            return None, None
-
-        data = r.json()
-
-        # 1️⃣ VIDEO directo
-        if "videoURLs" in data and data["videoURLs"]:
-            return "video", data["videoURLs"][0]
-
-        # 2️⃣ VIDEO desde media_extended (EL CASO DE REUTERS)
-        if "media_extended" in data:
-            for m in data["media_extended"]:
+        # VIDEO
+        if "media_extended" in r:
+            for m in r["media_extended"]:
                 if m.get("type") == "video":
                     variants = m.get("video_info", {}).get("variants", [])
                     mp4s = [v["url"] for v in variants if "mp4" in v.get("content_type","")]
                     if mp4s:
                         return "video", mp4s[-1]
 
-        # 3️⃣ IMAGEN
-        if "mediaURLs" in data and data["mediaURLs"]:
-            return "photo", data["mediaURLs"][0]
+        # FOTO
+        if "mediaURLs" in r and r["mediaURLs"]:
+            return "photo", r["mediaURLs"][0]
 
     except Exception as e:
-        print("Error media:", e)
+        print("Media error:", e)
 
     return None, None
 
 # ─────────────────────────────
-# ANTI DUPLICADOS
+# DESCARGAR VIDEO LOCALMENTE
+# ─────────────────────────────
+def descargar_video(url, filename="video.mp4"):
+    try:
+        r = requests.get(url, stream=True, timeout=60)
+        with open(filename, "wb") as f:
+            for chunk in r.iter_content(1024):
+                f.write(chunk)
+        return filename
+    except:
+        return None
+
 # ─────────────────────────────
 def get_last_link(account):
     file = f"last_{account}.txt"
@@ -79,8 +79,6 @@ def save_last_link(account, link):
     with open(f"last_{account}.txt", "w") as f:
         f.write(link)
 
-# ─────────────────────────────
-# BOTONES TELEGRAM
 # ─────────────────────────────
 def crear_botones(tweet_url, articulo_url):
     if articulo_url:
@@ -123,15 +121,16 @@ def send_photo(chat_id, caption, photo, reply_markup=None):
     })
     time.sleep(2)
 
-def send_video(chat_id, caption, video, reply_markup=None):
+def send_video(chat_id, caption, video_path, reply_markup=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "video": video,
-        "caption": caption,
-        "parse_mode": "HTML",
-        "reply_markup": reply_markup
-    })
+    with open(video_path, "rb") as vid:
+        requests.post(url, data={
+            "chat_id": chat_id,
+            "caption": caption,
+            "parse_mode": "HTML",
+            "reply_markup": reply_markup
+        }, files={"video": vid})
+    os.remove(video_path)
     time.sleep(2)
 
 # ─────────────────────────────
@@ -155,14 +154,20 @@ for account, chat_id in ACCOUNTS.items():
             texto, articulo = limpiar_texto_y_link(post.title)
             tweet_id = get_tweet_id(post.link)
             tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
-
             botones = crear_botones(tweet_fx, articulo)
+
             media_type, media_url = obtener_media_tweet(tweet_id)
 
             if media_type == "video":
-                send_video(chat_id, texto, media_url, botones)
+                video_file = descargar_video(media_url)
+                if video_file:
+                    send_video(chat_id, texto, video_file, botones)
+                else:
+                    send_message(chat_id, texto, botones)
+
             elif media_type == "photo":
                 send_photo(chat_id, texto, media_url, botones)
+
             else:
                 send_message(chat_id, texto, botones)
 
