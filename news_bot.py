@@ -12,38 +12,31 @@ ACCOUNTS = {
     "business": "-1003760302624",
     "WSJ": "-1003861476711",
     "FT": "-1003561464477",
-    "TheEconomist": "-1003897620126"
+    "TheEconomist": "-1003897620126",
+    "aleabitoreddit": "-1003627209266"
 }
 
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-# 🔥 Varias instancias Nitter (fallback automático)
-NITTERS = [
-    "https://nitter.net",
-    "https://nitter.poast.org",
-    "https://nitter.privacydev.net",
-    "https://nitter.projectsegfau.lt"
-]
+HEADERS={"User-Agent":"Mozilla/5.0"}
 
 # ─────────────────────────────
 def get_last_id(account):
-    file = f"last_{account}.txt"
+    file=f"last_{account}.txt"
     if not os.path.exists(file):
         return ""
     return open(file).read().strip()
 
-def save_last_id(account, tweet_id):
-    open(f"last_{account}.txt","w").write(tweet_id)
+def save_last_id(account,id):
+    open(f"last_{account}.txt","w").write(id)
 
 # ─────────────────────────────
 def crear_botones(tweet_url, articulo_url):
     if articulo_url:
-        kb = {"inline_keyboard":[[
+        kb={"inline_keyboard":[[
             {"text":"🐦 Ver tweet","url":tweet_url},
             {"text":"📰 Leer artículo","url":articulo_url}
         ]]}
     else:
-        kb = {"inline_keyboard":[[
+        kb={"inline_keyboard":[[
             {"text":"🐦 Ver tweet","url":tweet_url}
         ]]}
     return json.dumps(kb)
@@ -69,22 +62,15 @@ def send_photo(chat_id,text,url,buttons=None):
     })
     time.sleep(2)
 
-def send_video(chat_id,text,path,buttons=None):
-    with open(path,"rb") as v:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
-        data={"chat_id":chat_id,"caption":text,"parse_mode":"HTML","reply_markup":buttons},
-        files={"video":v})
-    os.remove(path)
+def send_video(chat_id,text,url,buttons=None):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",data={
+        "chat_id":chat_id,
+        "video":url,
+        "caption":text,
+        "parse_mode":"HTML",
+        "reply_markup":buttons
+    })
     time.sleep(2)
-
-# ─────────────────────────────
-def descargar_video(url):
-    name="video.mp4"
-    r=requests.get(url,stream=True,timeout=60)
-    with open(name,"wb") as f:
-        for c in r.iter_content(1024):
-            f.write(c)
-    return name
 
 # ─────────────────────────────
 def limpiar_texto(texto):
@@ -94,29 +80,14 @@ def limpiar_texto(texto):
     return texto,articulo
 
 # ─────────────────────────────
-# 🔥 OBTENER TWEETS CON FALLBACK
-def obtener_tweets(account):
-
-    for instance in NITTERS:
-        try:
-            url=f"{instance}/{account}/tweets?json=true"
-            r=requests.get(url,headers=HEADERS,timeout=20)
-
-            if r.status_code != 200:
-                continue
-
-            data=r.json()
-
-            if "tweets" in data:
-                print(f"OK usando {instance}")
-                return data["tweets"]
-
-        except:
-            print(f"Fallo instancia {instance}")
-            continue
-
-    print("⚠️ Todas las instancias Nitter fallaron")
-    return []
+# 🔥 API OFICIAL EMBED TWITTER (ESTABLE)
+def obtener_tweets(user):
+    url=f"https://cdn.syndication.twimg.com/widgets/timelines/profile?screen_name={user}"
+    try:
+        r=requests.get(url,headers=HEADERS,timeout=20).json()
+        return r["timeline"]["instructions"][0]["addEntries"]["entries"]
+    except:
+        return []
 
 # ─────────────────────────────
 for account,chat_id in ACCOUNTS.items():
@@ -128,9 +99,16 @@ for account,chat_id in ACCOUNTS.items():
     last_id=get_last_id(account)
     nuevos=[]
 
-    for t in tweets:
-        if t["id"]==last_id:
+    for entry in tweets:
+        if "tweet" not in entry["content"]:
+            continue
+
+        t=entry["content"]["tweet"]
+        id=t["id_str"]
+
+        if id==last_id:
             break
+
         nuevos.append(t)
 
     if not nuevos:
@@ -139,23 +117,21 @@ for account,chat_id in ACCOUNTS.items():
     nuevos.reverse()
 
     for t in nuevos:
-        texto,articulo=limpiar_texto(t["text"])
-        tweet_url=f"https://fxtwitter.com/{account}/status/{t['id']}"
+        texto,articulo=limpiar_texto(t["full_text"])
+        tweet_url=f"https://fxtwitter.com/{account}/status/{t['id_str']}"
         botones=crear_botones(tweet_url,articulo)
 
-        try:
-            if t["videos"]:
-                video_url=t["videos"][0]["url"]
-                video_file=descargar_video(video_url)
-                send_video(chat_id,texto,video_file,botones)
+        media=t.get("extended_entities",{}).get("media",[])
 
-            elif t["pictures"]:
-                send_photo(chat_id,texto,t["pictures"][0],botones)
-
+        if media:
+            m=media[0]
+            if m["type"]=="photo":
+                send_photo(chat_id,texto,m["media_url_https"],botones)
+            elif m["type"]=="video":
+                send_video(chat_id,texto,m["video_info"]["variants"][0]["url"],botones)
             else:
                 send_message(chat_id,texto,botones)
+        else:
+            send_message(chat_id,texto,botones)
 
-        except Exception as e:
-            print("Error enviando tweet:", e)
-
-    save_last_id(account,nuevos[-1]["id"])
+    save_last_id(account,nuevos[-1]["id_str"])
