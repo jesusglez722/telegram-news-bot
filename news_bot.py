@@ -16,11 +16,22 @@ ACCOUNTS = {
     "aleabitoreddit": "-1003627209266"
 }
 
-HEADERS = {"User-Agent":"Mozilla/5.0"}
+HEADERS_BASE = {"User-Agent":"Mozilla/5.0"}
+
+# ─────────────────────────────
+# 🔥 Obtener guest token (truco del frontend de Twitter)
+def get_guest_token():
+    r = requests.post(
+        "https://api.twitter.com/1.1/guest/activate.json",
+        headers={
+            "Authorization":"Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAA"
+        }
+    )
+    return r.json()["guest_token"]
 
 # ─────────────────────────────
 def get_last_id(account):
-    file = f"last_{account}.txt"
+    file=f"last_{account}.txt"
     if not os.path.exists(file):
         return ""
     return open(file).read().strip()
@@ -80,14 +91,20 @@ def limpiar_texto(texto):
     return texto,articulo
 
 # ─────────────────────────────
-# 🔥 EXTRACCIÓN ROBUSTA DE TWEETS
-def obtener_tweets(user):
-    url=f"https://cdn.syndication.twimg.com/widgets/timelines/profile?screen_name={user}"
-    try:
-        data=requests.get(url,headers=HEADERS,timeout=20).json()
-        instrucciones=data["timeline"]["instructions"]
+# 🔥 Obtener tweets reales (endpoint interno)
+def obtener_tweets(user,guest_token):
+    url=f"https://api.twitter.com/2/timeline/profile/{user}.json"
 
+    headers={
+        "authorization":"Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAA",
+        "x-guest-token":guest_token,
+        "user-agent":"Mozilla/5.0"
+    }
+
+    try:
+        data=requests.get(url,headers=headers,timeout=20).json()
         tweets=[]
+        instrucciones=data["timeline"]["instructions"]
 
         for inst in instrucciones:
             if "addEntries" not in inst:
@@ -101,9 +118,11 @@ def obtener_tweets(user):
         return []
 
 # ─────────────────────────────
+guest_token=get_guest_token()
+
 for account,chat_id in ACCOUNTS.items():
 
-    tweets=obtener_tweets(account)
+    tweets=obtener_tweets(account,guest_token)
     if not tweets:
         continue
 
