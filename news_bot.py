@@ -31,28 +31,37 @@ def get_tweet_id(link):
     return link.split("/")[-1]
 
 # ─────────────────────────────
-# OBTENER MEDIA DEL TWEET (IMAGEN O VIDEO)
+# EXTRAER MEDIA REAL DEL TWEET (VIDEO O IMAGEN)
 # ─────────────────────────────
 def obtener_media_tweet(tweet_id):
     try:
-        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
-        r = requests.get(url, headers=HEADERS, timeout=15)
+        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}?full=true"
+        r = requests.get(url, headers=HEADERS, timeout=20)
 
         if r.status_code != 200:
             return None, None
 
         data = r.json()
 
-        # PRIORIDAD: VIDEO
-        if "videoURLs" in data and len(data["videoURLs"]) > 0:
+        # 1️⃣ VIDEO directo
+        if "videoURLs" in data and data["videoURLs"]:
             return "video", data["videoURLs"][0]
 
-        # SI NO HAY VIDEO → IMAGEN
-        if "mediaURLs" in data and len(data["mediaURLs"]) > 0:
+        # 2️⃣ VIDEO desde media_extended (EL CASO DE REUTERS)
+        if "media_extended" in data:
+            for m in data["media_extended"]:
+                if m.get("type") == "video":
+                    variants = m.get("video_info", {}).get("variants", [])
+                    mp4s = [v["url"] for v in variants if "mp4" in v.get("content_type","")]
+                    if mp4s:
+                        return "video", mp4s[-1]
+
+        # 3️⃣ IMAGEN
+        if "mediaURLs" in data and data["mediaURLs"]:
             return "photo", data["mediaURLs"][0]
 
-    except:
-        pass
+    except Exception as e:
+        print("Error media:", e)
 
     return None, None
 
@@ -152,10 +161,8 @@ for account, chat_id in ACCOUNTS.items():
 
             if media_type == "video":
                 send_video(chat_id, texto, media_url, botones)
-
             elif media_type == "photo":
                 send_photo(chat_id, texto, media_url, botones)
-
             else:
                 send_message(chat_id, texto, botones)
 
