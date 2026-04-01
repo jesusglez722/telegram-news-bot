@@ -16,11 +16,11 @@ ACCOUNTS = {
     "aleabitoreddit": "-1003627209266"
 }
 
-HEADERS={"User-Agent":"Mozilla/5.0"}
+HEADERS = {"User-Agent":"Mozilla/5.0"}
 
 # ─────────────────────────────
 def get_last_id(account):
-    file=f"last_{account}.txt"
+    file = f"last_{account}.txt"
     if not os.path.exists(file):
         return ""
     return open(file).read().strip()
@@ -80,12 +80,23 @@ def limpiar_texto(texto):
     return texto,articulo
 
 # ─────────────────────────────
-# 🔥 API OFICIAL EMBED TWITTER (ESTABLE)
+# 🔥 EXTRACCIÓN ROBUSTA DE TWEETS
 def obtener_tweets(user):
     url=f"https://cdn.syndication.twimg.com/widgets/timelines/profile?screen_name={user}"
     try:
-        r=requests.get(url,headers=HEADERS,timeout=20).json()
-        return r["timeline"]["instructions"][0]["addEntries"]["entries"]
+        data=requests.get(url,headers=HEADERS,timeout=20).json()
+        instrucciones=data["timeline"]["instructions"]
+
+        tweets=[]
+
+        for inst in instrucciones:
+            if "addEntries" not in inst:
+                continue
+            for entry in inst["addEntries"]["entries"]:
+                if "tweet" in entry.get("content",{}):
+                    tweets.append(entry["content"]["tweet"])
+
+        return tweets
     except:
         return []
 
@@ -99,16 +110,10 @@ for account,chat_id in ACCOUNTS.items():
     last_id=get_last_id(account)
     nuevos=[]
 
-    for entry in tweets:
-        if "tweet" not in entry["content"]:
-            continue
-
-        t=entry["content"]["tweet"]
+    for t in tweets:
         id=t["id_str"]
-
         if id==last_id:
             break
-
         nuevos.append(t)
 
     if not nuevos:
