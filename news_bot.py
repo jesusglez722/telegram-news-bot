@@ -4,7 +4,6 @@ import os
 import re
 import json
 import time
-from datetime import datetime
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -19,15 +18,9 @@ ACCOUNTS = {
 
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-# ─────────────────────────────────────────────
-# LOGS (muy importante para producción)
-# ─────────────────────────────────────────────
-def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-# ─────────────────────────────────────────────
-# LIMPIEZA TEXTO
-# ─────────────────────────────────────────────
+# ─────────────────────────────
+# LIMPIAR TEXTO + EXTRAER LINK
+# ─────────────────────────────
 def limpiar_texto_y_link(texto):
     links = re.findall(r'https?://\S+', texto)
     articulo = links[0] if links else ""
@@ -37,29 +30,35 @@ def limpiar_texto_y_link(texto):
 def get_tweet_id(link):
     return link.split("/")[-1]
 
-# ─────────────────────────────────────────────
-# OBTENER IMAGEN DEL TWEET (fx/vx twitter)
-# ─────────────────────────────────────────────
-def obtener_imagen_tweet(tweet_id):
+# ─────────────────────────────
+# OBTENER MEDIA DEL TWEET (IMAGEN O VIDEO)
+# ─────────────────────────────
+def obtener_media_tweet(tweet_id):
     try:
         url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
         r = requests.get(url, headers=HEADERS, timeout=15)
 
         if r.status_code != 200:
-            return None
+            return None, None
 
         data = r.json()
+
+        # PRIORIDAD: VIDEO
+        if "videoURLs" in data and len(data["videoURLs"]) > 0:
+            return "video", data["videoURLs"][0]
+
+        # SI NO HAY VIDEO → IMAGEN
         if "mediaURLs" in data and len(data["mediaURLs"]) > 0:
-            return data["mediaURLs"][0]
+            return "photo", data["mediaURLs"][0]
 
-    except Exception as e:
-        log(f"Error imagen tweet: {e}")
+    except:
+        pass
 
-    return None
+    return None, None
 
-# ─────────────────────────────────────────────
-# SISTEMA ANTI DUPLICADOS
-# ─────────────────────────────────────────────
+# ─────────────────────────────
+# ANTI DUPLICADOS
+# ─────────────────────────────
 def get_last_link(account):
     file = f"last_{account}.txt"
     if not os.path.exists(file):
@@ -71,9 +70,9 @@ def save_last_link(account, link):
     with open(f"last_{account}.txt", "w") as f:
         f.write(link)
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────
 # BOTONES TELEGRAM
-# ─────────────────────────────────────────────
+# ─────────────────────────────
 def crear_botones(tweet_url, articulo_url):
     if articulo_url:
         keyboard = {
@@ -90,65 +89,57 @@ def crear_botones(tweet_url, articulo_url):
         }
     return json.dumps(keyboard)
 
-# ─────────────────────────────────────────────
-# ENVÍOS TELEGRAM (ANTI BAN)
-# ─────────────────────────────────────────────
+# ─────────────────────────────
+# ENVÍOS TELEGRAM
+# ─────────────────────────────
 def send_message(chat_id, text, reply_markup=None):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, data={
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-            "reply_markup": reply_markup
-        }, timeout=15)
-
-        time.sleep(3)  # ← ANTI FLOOD
-
-    except Exception as e:
-        log(f"Error enviando mensaje: {e}")
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup
+    })
+    time.sleep(2)
 
 def send_photo(chat_id, caption, photo, reply_markup=None):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-        requests.post(url, data={
-            "chat_id": chat_id,
-            "photo": photo,
-            "caption": caption,
-            "parse_mode": "HTML",
-            "reply_markup": reply_markup
-        }, timeout=20)
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "photo": photo,
+        "caption": caption,
+        "parse_mode": "HTML",
+        "reply_markup": reply_markup
+    })
+    time.sleep(2)
 
-        time.sleep(3)  # ← ANTI FLOOD
+def send_video(chat_id, caption, video, reply_markup=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "video": video,
+        "caption": caption,
+        "parse_mode": "HTML",
+        "reply_markup": reply_markup
+    })
+    time.sleep(2)
 
-    except Exception as e:
-        log(f"Error enviando foto: {e}")
+# ─────────────────────────────
+# LOOP PRINCIPAL
+# ─────────────────────────────
+for account, chat_id in ACCOUNTS.items():
+    feed = feedparser.parse(f"https://nitter.net/{account}/rss")
 
-# ─────────────────────────────────────────────
-# PROCESADOR PRINCIPAL
-# ─────────────────────────────────────────────
-def procesar_cuenta(account, chat_id):
-    try:
-        log(f"Revisando {account}")
+    last_link = get_last_link(account)
+    new_posts = []
 
-        feed = feedparser.parse(f"https://nitter.net/{account}/rss")
-        if not feed.entries:
-            log("RSS vacío o caído")
-            return
+    for entry in feed.entries:
+        if entry.link == last_link:
+            break
+        new_posts.append(entry)
 
-        last_link = get_last_link(account)
-        new_posts = []
-
-        for entry in feed.entries:
-            if entry.link == last_link:
-                break
-            new_posts.append(entry)
-
-        if not new_posts:
-            log("Sin tweets nuevos")
-            return
-
+    if new_posts:
         new_posts.reverse()
 
         for post in new_posts:
@@ -157,30 +148,15 @@ def procesar_cuenta(account, chat_id):
             tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
 
             botones = crear_botones(tweet_fx, articulo)
-            imagen = obtener_imagen_tweet(tweet_id)
+            media_type, media_url = obtener_media_tweet(tweet_id)
 
-            if imagen:
-                send_photo(chat_id, texto, imagen, botones)
+            if media_type == "video":
+                send_video(chat_id, texto, media_url, botones)
+
+            elif media_type == "photo":
+                send_photo(chat_id, texto, media_url, botones)
+
             else:
                 send_message(chat_id, texto, botones)
 
         save_last_link(account, new_posts[-1].link)
-        log(f"{len(new_posts)} tweets publicados")
-
-    except Exception as e:
-        log(f"Error procesando cuenta {account}: {e}")
-
-# ─────────────────────────────────────────────
-# LOOP PRINCIPAL
-# ─────────────────────────────────────────────
-def main():
-    log("BOT INICIADO")
-
-    for account, chat_id in ACCOUNTS.items():
-        procesar_cuenta(account, chat_id)
-        time.sleep(5)  # ← pausa entre cuentas (anti ban)
-
-    log("Ciclo terminado")
-
-if __name__ == "__main__":
-    main()
