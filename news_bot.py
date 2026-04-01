@@ -1,164 +1,123 @@
+import feedparser
 import requests
 import os
-import time
+import re
 import json
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
 
-HEADERS_BASE = {
-    "authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAA",
-    "user-agent": "Mozilla/5.0"
+ACCOUNTS = {
+    "ReutersBiz": "-1003749568108",
+    "ReuterChina": "-1003724765047",
+    "business": "-1003760302624",
+    "WSJ": "-1003861476711",
+    "FT": "-1003561464477",
+    "TheEconomist": "-1003897620126"
 }
 
-ACCOUNTS = [
-    "CNNEE",
-    "BBCWorld",
-    "Reuters",
-    "AP"
-]
+# ─────────────────────────────
 
-# ─────────────────────────────────────────────
-# OBTENER GUEST TOKEN (NUEVO MÉTODO FUNCIONAL)
-# ─────────────────────────────────────────────
-def get_guest_token():
-    r = requests.post(
-        "https://api.twitter.com/1.1/guest/activate.json",
-        headers=HEADERS_BASE,
-        timeout=20
-    )
-    data = r.json()
-    if "guest_token" not in data:
-        raise Exception("Twitter bloqueó guest token")
-    return data["guest_token"]
+def limpiar_texto_y_link(texto):
+    links = re.findall(r'https?://\S+', texto)
+    articulo = links[0] if links else ""
+    texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
+    return texto_limpio, articulo
 
-# ─────────────────────────────────────────────
-# OBTENER TWEETS DESDE GRAPHQL (MÉTODO NUEVO)
-# ─────────────────────────────────────────────
-def get_tweets(username, guest_token):
+def get_tweet_id(link):
+    return link.split("/")[-1]
 
-    headers = HEADERS_BASE.copy()
-    headers["x-guest-token"] = guest_token
+# 🖼️ imagen del tweet (vxtwitter)
+def obtener_imagen_tweet(tweet_id):
+    try:
+        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}"
+        r = requests.get(url, timeout=10).json()
+        if "mediaURLs" in r and len(r["mediaURLs"]) > 0:
+            return r["mediaURLs"][0]
+    except:
+        return None
+    return None
 
-    url = f"https://api.twitter.com/2/search/adaptive.json?q=from:{username}&count=5&tweet_mode=extended"
+# ─────────────────────────────
 
-    r = requests.get(url, headers=headers, timeout=20)
-    data = r.json()
+def get_last_link(account):
+    file = f"last_{account}.txt"
+    if not os.path.exists(file):
+        return ""
+    with open(file, "r") as f:
+        return f.read().strip()
 
-    if "globalObjects" not in data:
-        return []
+def save_last_link(account, link):
+    with open(f"last_{account}.txt", "w") as f:
+        f.write(link)
 
-    tweets = data["globalObjects"]["tweets"]
-    users = data["globalObjects"]["users"]
+# ─────────────────────────────
+# 🔘 BOTONES TELEGRAM (con artículo opcional)
 
-    result = []
+def crear_botones(tweet_url, articulo_url):
+    if articulo_url:
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "🐦 Ver tweet", "url": tweet_url},
+                {"text": "📰 Leer artículo", "url": articulo_url}
+            ]]
+        }
+    else:
+        keyboard = {
+            "inline_keyboard": [[
+                {"text": "🐦 Ver tweet", "url": tweet_url}
+            ]]
+        }
+    return json.dumps(keyboard)
 
-    for tweet_id in tweets:
-        t = tweets[tweet_id]
+def send_message(chat_id, text, reply_markup=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+        "reply_markup": reply_markup
+    })
 
-        text = t.get("full_text", "")
-        media_urls = []
-        video_url = None
+def send_photo(chat_id, caption, photo, reply_markup=None):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    requests.post(url, data={
+        "chat_id": chat_id,
+        "photo": photo,
+        "caption": caption,
+        "parse_mode": "HTML",
+        "reply_markup": reply_markup
+    })
 
-        if "extended_entities" in t:
-            media = t["extended_entities"]["media"]
+# ─────────────────────────────
 
-            for m in media:
-                if m["type"] == "photo":
-                    media_urls.append(m["media_url_https"])
+for account, chat_id in ACCOUNTS.items():
+    feed = feedparser.parse(f"https://nitter.net/{account}/rss")
 
-                if m["type"] == "video" or m["type"] == "animated_gif":
-                    variants = m["video_info"]["variants"]
-                    variants = [v for v in variants if "bitrate" in v]
-                    if variants:
-                        video_url = sorted(
-                            variants,
-                            key=lambda x: x["bitrate"],
-                            reverse=True
-                        )[0]["url"]
+    last_link = get_last_link(account)
+    new_posts = []
 
-        result.append({
-            "id": tweet_id,
-            "text": text,
-            "photos": media_urls,
-            "video": video_url
-        })
+    for entry in feed.entries:
+        if entry.link == last_link:
+            break
+        new_posts.append(entry)
 
-    return result
+    if new_posts:
+        new_posts.reverse()
 
+        for post in new_posts:
+            texto, articulo = limpiar_texto_y_link(post.title)
+            tweet_id = get_tweet_id(post.link)
+            tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
 
-# ─────────────────────────────────────────────
-# TELEGRAM SENDER
-# ─────────────────────────────────────────────
-def send_message(text):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
-    )
+            botones = crear_botones(tweet_fx, articulo)
+            caption = texto
 
-def send_photo(photo, caption):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-        data={"chat_id": CHAT_ID, "photo": photo, "caption": caption}
-    )
+            imagen = obtener_imagen_tweet(tweet_id)
 
-def send_video(video, caption):
-    requests.post(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
-        data={"chat_id": CHAT_ID, "video": video, "caption": caption}
-    )
+            if imagen:
+                send_photo(chat_id, caption, imagen, botones)
+            else:
+                send_message(chat_id, caption, botones)
 
-# ─────────────────────────────────────────────
-# CONTROL DE TWEETS YA ENVIADOS
-# ─────────────────────────────────────────────
-def load_last():
-    if os.path.exists("last.json"):
-        return json.load(open("last.json"))
-    return {}
-
-def save_last(data):
-    json.dump(data, open("last.json","w"))
-
-# ─────────────────────────────────────────────
-# MAIN BOT
-# ─────────────────────────────────────────────
-last_ids = load_last()
-
-guest_token = get_guest_token()
-
-for account in ACCOUNTS:
-    print("Revisando:", account)
-
-    tweets = get_tweets(account, guest_token)
-
-    if account not in last_ids:
-        last_ids[account] = "0"
-
-    for tweet in reversed(tweets):
-
-        if tweet["id"] <= last_ids[account]:
-            continue
-
-        text = f"https://twitter.com/{account}/status/{tweet['id']}\n\n{tweet['text']}"
-
-        # PRIORIDAD 1: VIDEO
-        if tweet["video"]:
-            print("Enviando VIDEO")
-            send_video(tweet["video"], text)
-
-        # PRIORIDAD 2: FOTO
-        elif tweet["photos"]:
-            print("Enviando FOTO")
-            send_photo(tweet["photos"][0], text)
-
-        # PRIORIDAD 3: TEXTO
-        else:
-            print("Enviando TEXTO")
-            send_message(text)
-
-        last_ids[account] = tweet["id"]
-        time.sleep(2)
-
-save_last(last_ids)
-
-print("BOT OK")
+        save_last_link(account, new_posts[-1].link)
