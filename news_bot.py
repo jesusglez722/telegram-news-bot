@@ -1,4 +1,3 @@
-import feedparser
 import requests
 import os
 import re
@@ -19,156 +18,111 @@ ACCOUNTS = {
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 # ─────────────────────────────
-def limpiar_texto_y_link(texto):
-    links = re.findall(r'https?://\S+', texto)
-    articulo = links[0] if links else ""
-    texto_limpio = re.sub(r'https?://\S+', '', texto).strip()
-    return texto_limpio, articulo
-
-def get_tweet_id(link):
-    return link.split("/")[-1]
-
-# ─────────────────────────────
-# EXTRAER MEDIA (VIDEO / FOTO)
-# ─────────────────────────────
-def obtener_media_tweet(tweet_id):
-    try:
-        url = f"https://api.vxtwitter.com/Twitter/status/{tweet_id}?full=true"
-        r = requests.get(url, headers=HEADERS, timeout=20).json()
-
-        # VIDEO
-        if "media_extended" in r:
-            for m in r["media_extended"]:
-                if m.get("type") == "video":
-                    variants = m.get("video_info", {}).get("variants", [])
-                    mp4s = [v["url"] for v in variants if "mp4" in v.get("content_type","")]
-                    if mp4s:
-                        return "video", mp4s[-1]
-
-        # FOTO
-        if "mediaURLs" in r and r["mediaURLs"]:
-            return "photo", r["mediaURLs"][0]
-
-    except Exception as e:
-        print("Media error:", e)
-
-    return None, None
-
-# ─────────────────────────────
-# DESCARGAR VIDEO LOCALMENTE
-# ─────────────────────────────
-def descargar_video(url, filename="video.mp4"):
-    try:
-        r = requests.get(url, stream=True, timeout=60)
-        with open(filename, "wb") as f:
-            for chunk in r.iter_content(1024):
-                f.write(chunk)
-        return filename
-    except:
-        return None
-
-# ─────────────────────────────
-def get_last_link(account):
+def get_last_id(account):
     file = f"last_{account}.txt"
     if not os.path.exists(file):
         return ""
-    with open(file, "r") as f:
-        return f.read().strip()
+    return open(file).read().strip()
 
-def save_last_link(account, link):
-    with open(f"last_{account}.txt", "w") as f:
-        f.write(link)
+def save_last_id(account, tweet_id):
+    open(f"last_{account}.txt","w").write(tweet_id)
 
 # ─────────────────────────────
 def crear_botones(tweet_url, articulo_url):
     if articulo_url:
-        keyboard = {
-            "inline_keyboard": [[
-                {"text": "🐦 Ver tweet", "url": tweet_url},
-                {"text": "📰 Leer artículo", "url": articulo_url}
-            ]]
-        }
+        kb = {"inline_keyboard":[[
+            {"text":"🐦 Ver tweet","url":tweet_url},
+            {"text":"📰 Leer artículo","url":articulo_url}
+        ]]}
     else:
-        keyboard = {
-            "inline_keyboard": [[
-                {"text": "🐦 Ver tweet", "url": tweet_url}
-            ]]
-        }
-    return json.dumps(keyboard)
+        kb = {"inline_keyboard":[[
+            {"text":"🐦 Ver tweet","url":tweet_url}
+        ]]}
+    return json.dumps(kb)
 
 # ─────────────────────────────
-# ENVÍOS TELEGRAM
-# ─────────────────────────────
-def send_message(chat_id, text, reply_markup=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-        "reply_markup": reply_markup
+def send_message(chat_id,text,buttons=None):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",data={
+        "chat_id":chat_id,
+        "text":text,
+        "parse_mode":"HTML",
+        "disable_web_page_preview":True,
+        "reply_markup":buttons
     })
     time.sleep(2)
 
-def send_photo(chat_id, caption, photo, reply_markup=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "photo": photo,
-        "caption": caption,
-        "parse_mode": "HTML",
-        "reply_markup": reply_markup
+def send_photo(chat_id,text,url,buttons=None):
+    requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",data={
+        "chat_id":chat_id,
+        "photo":url,
+        "caption":text,
+        "parse_mode":"HTML",
+        "reply_markup":buttons
     })
     time.sleep(2)
 
-def send_video(chat_id, caption, video_path, reply_markup=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
-    with open(video_path, "rb") as vid:
-        requests.post(url, data={
-            "chat_id": chat_id,
-            "caption": caption,
-            "parse_mode": "HTML",
-            "reply_markup": reply_markup
-        }, files={"video": vid})
-    os.remove(video_path)
+def send_video(chat_id,text,path,buttons=None):
+    with open(path,"rb") as v:
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo",
+        data={"chat_id":chat_id,"caption":text,"parse_mode":"HTML","reply_markup":buttons},
+        files={"video":v})
+    os.remove(path)
     time.sleep(2)
 
 # ─────────────────────────────
-# LOOP PRINCIPAL
+def descargar_video(url):
+    name="video.mp4"
+    r=requests.get(url,stream=True,timeout=60)
+    with open(name,"wb") as f:
+        for c in r.iter_content(1024):
+            f.write(c)
+    return name
+
 # ─────────────────────────────
-for account, chat_id in ACCOUNTS.items():
-    feed = feedparser.parse(f"https://nitter.net/{account}/rss")
+def limpiar_texto(texto):
+    links=re.findall(r'https?://\S+',texto)
+    articulo=links[0] if links else ""
+    texto=re.sub(r'https?://\S+','',texto).strip()
+    return texto,articulo
 
-    last_link = get_last_link(account)
-    new_posts = []
+# ─────────────────────────────
+def obtener_tweets(account):
+    url=f"https://nitter.net/{account}/tweets?json=true"
+    return requests.get(url,headers=HEADERS,timeout=20).json()["tweets"]
 
-    for entry in feed.entries:
-        if entry.link == last_link:
+# ─────────────────────────────
+for account,chat_id in ACCOUNTS.items():
+
+    tweets=obtener_tweets(account)
+    last_id=get_last_id(account)
+    nuevos=[]
+
+    for t in tweets:
+        if t["id"]==last_id:
             break
-        new_posts.append(entry)
+        nuevos.append(t)
 
-    if new_posts:
-        new_posts.reverse()
+    if not nuevos:
+        continue
 
-        for post in new_posts:
-            texto, articulo = limpiar_texto_y_link(post.title)
-            tweet_id = get_tweet_id(post.link)
-            tweet_fx = post.link.replace("nitter.net", "fxtwitter.com")
-            botones = crear_botones(tweet_fx, articulo)
+    nuevos.reverse()
 
-            media_type, media_url = obtener_media_tweet(tweet_id)
+    for t in nuevos:
+        texto,articulo=limpiar_texto(t["text"])
+        tweet_url=f"https://fxtwitter.com/{account}/status/{t['id']}"
+        botones=crear_botones(tweet_url,articulo)
 
-            if media_type == "video":
-                video_file = descargar_video(media_url)
-                if video_file:
-                    send_video(chat_id, texto, video_file, botones)
-                else:
-                    send_message(chat_id, texto, botones)
+        # VIDEO
+        if t["videos"]:
+            video_url=t["videos"][0]["url"]
+            video_file=descargar_video(video_url)
+            send_video(chat_id,texto,video_file,botones)
 
-            elif media_type == "photo":
-                send_photo(chat_id, texto, media_url, botones)
+        # FOTO
+        elif t["pictures"]:
+            send_photo(chat_id,texto,t["pictures"][0],botones)
 
-            else:
-                send_message(chat_id, texto, botones)
+        else:
+            send_message(chat_id,texto,botones)
 
-        save_last_link(account, new_posts[-1].link)
+    save_last_id(account,nuevos[-1]["id"])
